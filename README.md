@@ -34,16 +34,18 @@
    python main.py
    ```
 
-### 方式二：GitHub Actions 云端打包（无需本机 Windows / Python）
+### 方式二：GitHub Releases 下载（推荐，无需本机 Windows / Python）
 
-1. 将代码推送到 GitHub（`main` 分支）
-2. 打开仓库 **Actions** 页面，等待 **Build Windows EXE** 完成
-3. 进入该次运行详情，在 **Artifacts** 中下载 `eggplant-pet-windows`
-4. 解压得到 `茄子桌宠.exe`，在 Windows 上双击运行
+打包成功后会自动发布到 Releases，长期可下载：
 
-也可在 Actions 页面点击 **Run workflow** 手动触发打包。
+1. 打开 [Releases 页面](https://github.com/1301604100/eggplant/releases)
+2. 进入 **茄子桌宠 Windows**（tag: `latest`）
+3. 下载 `茄子桌宠.exe` 或 `EggplantPet-Windows.exe`，双击运行
 
-> 💡 打包后的 EXE 是单文件，内置 Python 运行时，目标电脑无需安装 Python
+推送到 `main` 或在 Actions 里手动 **Run workflow** 都会重新打包并覆盖 `latest` 发布。
+
+> 💡 打包后的 EXE 是单文件，内置 Python 运行时，目标电脑无需安装 Python  
+> Artifacts 仍会保留一份临时产物，但请优先用 Releases 链接分享
 
 ### 方式三：本机 Windows 打包
 

@@ -5,6 +5,9 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -34,10 +37,39 @@ jobs:
           --hidden-import tray
           main.py
 
-      - name: Upload EXE
+      - name: Prepare release assets
+        shell: pwsh
+        run: |
+          Copy-Item -Force "dist\茄子桌宠.exe" "dist\EggplantPet-Windows.exe"
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: eggplant-pet-windows
-          path: dist/茄子桌宠.exe
+          path: |
+            dist/茄子桌宠.exe
+            dist/EggplantPet-Windows.exe
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: 茄子桌宠 Windows
+          body: |
+            ## 下载说明
+            下载下方附件即可运行（无需安装 Python）：
+            - `茄子桌宠.exe`（中文文件名）
+            - `EggplantPet-Windows.exe`（英文文件名，部分环境下载更稳）
+
+            - Commit: `${{ github.sha }}`
+            - Workflow run: #${{ github.run_number }}
+          files: |
+            dist/茄子桌宠.exe
+            dist/EggplantPet-Windows.exe
+          fail_on_unmatched_files: true
+          make_latest: true
+          overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
