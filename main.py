@@ -8,11 +8,16 @@ import sys
 import os
 import random
 from ctypes import CFUNCTYPE, c_char_p, c_long, c_void_p, cdll, util
-from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QMenu, QAction,
-                             QVBoxLayout, QHBoxLayout, QPushButton, QDialog,
-                             QSlider, QGraphicsDropShadowEffect)
-from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QSize, QRect, pyqtProperty
-from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QFontMetrics, QPainterPath
+from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QMenu, QAction
+from PyQt5.QtCore import (
+    Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QRect,
+    QSequentialAnimationGroup,
+)
+from PyQt5.QtGui import QPixmap
+
+from bubble import SpeechBubble, ChatInputBubble
+from chat import reply as chat_reply
+from tray import PetTray
 
 
 # macOS: Qt 的 WindowStaysOnTopHint 约等于 level=8；此前误用 NSFloatingWindowLevel=3 反而更低
@@ -111,75 +116,6 @@ DIALOGUES = [
 ]
 
 
-class BubbleWidget(QWidget):
-    """对话气泡组件"""
-    def __init__(self, text, parent=None):
-        super().__init__(parent)
-        self.text = text
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setAttribute(Qt.WA_ShowWithoutActivating)
-
-        # 计算气泡大小
-        font = QFont("Microsoft YaHei", 11)
-        fm = QFontMetrics(font)
-        text_width = fm.horizontalAdvance(text)
-        text_height = fm.height()
-
-        self.padding_x = 16
-        self.padding_y = 10
-        self.bubble_width = text_width + self.padding_x * 2
-        self.bubble_height = text_height + self.padding_y * 2
-        self.tail_height = 10
-
-        self.setFixedSize(self.bubble_width + 4, self.bubble_height + self.tail_height + 4)
-
-        # 阴影效果
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(15)
-        shadow.setColor(QColor(0, 0, 0, 60))
-        shadow.setOffset(0, 3)
-        self.setGraphicsEffect(shadow)
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        # 气泡主体
-        path = QPainterPath()
-        rect_x = 2
-        rect_y = 2
-        rect_w = self.bubble_width
-        rect_h = self.bubble_height
-        radius = 12
-
-        # 圆角矩形
-        path.addRoundedRect(rect_x, rect_y, rect_w, rect_h, radius, radius)
-
-        # 气泡尾巴（指向下方中间）
-        tail_x = rect_x + rect_w / 2
-        tail_y = rect_y + rect_h
-        path.moveTo(tail_x - 8, tail_y)
-        path.lineTo(tail_x, tail_y + self.tail_height)
-        path.lineTo(tail_x + 8, tail_y)
-        path.closeSubpath()
-
-        # 填充白色背景
-        painter.fillPath(path, QColor(255, 255, 255, 245))
-
-        # 绘制边框
-        painter.setPen(QColor(220, 220, 220, 200))
-        painter.drawPath(path)
-
-        # 绘制文字
-        painter.setPen(QColor(60, 60, 60))
-        font = QFont("Microsoft YaHei", 11)
-        painter.setFont(font)
-        text_rect = QRect(rect_x + self.padding_x, rect_y + self.padding_y,
-                          rect_w - self.padding_x * 2, rect_h - self.padding_y * 2)
-        painter.drawText(text_rect, Qt.AlignCenter, self.text)
-
-
 class EggplantPet(QWidget):
     """茄子桌面宠物主窗口"""
 
@@ -211,8 +147,9 @@ class EggplantPet(QWidget):
         self.pet_label.setAlignment(Qt.AlignCenter)
         self._update_pixmap()
 
-        # 对话气泡
+        # 对话气泡 / 聊天输入
         self.bubble = None
+        self.chat_input = None
         self.bubble_timer = QTimer(self)
         self.bubble_timer.setSingleShot(True)
         self.bubble_timer.timeout.connect(self._hide_bubble)
@@ -225,6 +162,19 @@ class EggplantPet(QWidget):
         # 动画相关
         self.animation = None
         self.original_geometry = None
+
+        # 系统托盘
+        self.tray = PetTray(
+            self,
+            self._get_resource_path("eggplant.png"),
+            {
+                "show_pet": self._show_pet,
+                "hide_pet": self._hide_pet,
+                "open_chat": self._open_chat,
+                "quit": self._quit_app,
+            },
+        )
+        self.tray.show()
 
         # 初始位置（屏幕右下角）
         self._init_position()
@@ -277,6 +227,7 @@ class EggplantPet(QWidget):
                 self.move(event.globalPos() - self.drag_position)
                 # 移动时隐藏气泡
                 self._hide_bubble()
+                self._hide_chat_input()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -335,6 +286,16 @@ class EggplantPet(QWidget):
 
         menu.addSeparator()
 
+        chat_action = QAction("聊聊天", self)
+        chat_action.triggered.connect(self._open_chat)
+        menu.addAction(chat_action)
+
+        hide_action = QAction("隐藏", self)
+        hide_action.triggered.connect(self._hide_pet)
+        menu.addAction(hide_action)
+
+        menu.addSeparator()
+
         # 置顶开关
         top_action = QAction("取消置顶" if self.is_stay_on_top else "始终置顶", self)
         top_action.triggered.connect(self._toggle_stay_on_top)
@@ -352,9 +313,59 @@ class EggplantPet(QWidget):
     def _quit_app(self):
         """彻底退出（macOS 上 Tool 窗口 close 不会结束进程，图标会留在程序坞）"""
         self._hide_bubble()
+        self._hide_chat_input()
+        if self.tray:
+            self.tray.hide()
         app = QApplication.instance()
         if app is not None:
             app.quit()
+
+    def _hide_pet(self):
+        self._hide_bubble()
+        self._hide_chat_input()
+        self.hide()
+
+    def _show_pet(self):
+        self.show()
+        self.raise_()
+        self._refresh_native_topmost()
+
+    def _open_chat(self):
+        """打开聊天输入气泡"""
+        self._show_pet()
+        self._hide_bubble()
+        if self.chat_input is None:
+            self.chat_input = ChatInputBubble(on_send=self._on_chat_send)
+        self._position_chat_input()
+        self.chat_input.show()
+        self.chat_input.raise_()
+        apply_native_topmost(self.chat_input, self.is_stay_on_top)
+        self.chat_input.focus_input()
+
+    def _hide_chat_input(self):
+        if self.chat_input is not None:
+            self.chat_input.hide()
+
+    def _position_chat_input(self):
+        if self.chat_input is None:
+            return
+        self.chat_input.adjustSize()
+        x = self.x() + self.width() // 2 - self.chat_input.width() // 2
+        y = self.y() - self.chat_input.height() - 8
+        screen = QApplication.primaryScreen().availableGeometry()
+        if x < 10:
+            x = 10
+        if x + self.chat_input.width() > screen.width() - 10:
+            x = screen.width() - self.chat_input.width() - 10
+        if y < 10:
+            y = self.y() + self.height() + 8
+        self.chat_input.move(x, y)
+
+    def _on_chat_send(self, text):
+        self._hide_chat_input()
+        answer = chat_reply(text)
+        if answer:
+            self._show_bubble(answer, duration_ms=3500)
 
     # ============== 大小调整 ==============
     def _set_scale(self, scale):
@@ -396,6 +407,8 @@ class EggplantPet(QWidget):
         apply_native_topmost(self, self.is_stay_on_top)
         if self.bubble is not None:
             apply_native_topmost(self.bubble, self.is_stay_on_top)
+        if self.chat_input is not None and self.chat_input.isVisible():
+            apply_native_topmost(self.chat_input, self.is_stay_on_top)
 
     # ============== 互动动画 ==============
     def _trigger_interaction(self):
@@ -409,124 +422,142 @@ class EggplantPet(QWidget):
         self.animation_index += 1
         anim_func()
 
-        # 显示对话气泡
-        QTimer.singleShot(200, self._show_random_bubble)
+        # 气泡稍晚出现，避开预备动作
+        QTimer.singleShot(280, self._show_random_bubble)
+
+    def _stop_running_animation(self):
+        if self.animation is not None:
+            try:
+                self.animation.stop()
+            except Exception:
+                pass
+            self.animation = None
+        timer = getattr(self, "_shake_timer", None)
+        if timer is not None:
+            timer.stop()
+            self._shake_timer = None
+
+    def _make_pos_anim(self, start, end, duration, curve):
+        anim = QPropertyAnimation(self, b"pos")
+        anim.setDuration(duration)
+        anim.setStartValue(start)
+        anim.setEndValue(end)
+        anim.setEasingCurve(curve)
+        return anim
+
+    def _make_geo_anim(self, start, end, duration, curve):
+        anim = QPropertyAnimation(self, b"geometry")
+        anim.setDuration(duration)
+        anim.setStartValue(start)
+        anim.setEndValue(end)
+        anim.setEasingCurve(curve)
+        return anim
+
+    def _squashed_rect(self, base: QRect, width_ratio: float, height_ratio: float) -> QRect:
+        """底部对齐的压扁矩形，用于落地/挤压感"""
+        w = max(8, int(base.width() * width_ratio))
+        h = max(8, int(base.height() * height_ratio))
+        x = base.x() + (base.width() - w) // 2
+        y = base.y() + base.height() - h
+        return QRect(x, y, w, h)
 
     def _animate_jump(self):
-        """跳跃动画"""
+        """跳跃：下蹲预备 → 起跳 → 落下 → 轻弹落地"""
         if self.is_animating:
             return
+        self._stop_running_animation()
         self.is_animating = True
-        self.original_geometry = self.geometry()
+        self.original_geometry = QRect(self.geometry())
+        origin = self.original_geometry.topLeft()
+        peak = QPoint(origin.x(), origin.y() - 72)
 
-        jump_height = 60
-        duration = 400
+        group = QSequentialAnimationGroup(self)
+        dip = self._make_pos_anim(
+            origin, QPoint(origin.x(), origin.y() + 10), 90, QEasingCurve.InQuad
+        )
+        up = self._make_pos_anim(
+            QPoint(origin.x(), origin.y() + 10), peak, 300, QEasingCurve.OutCubic
+        )
+        down = self._make_pos_anim(peak, origin, 270, QEasingCurve.InCubic)
+        bounce = QPropertyAnimation(self, b"pos")
+        bounce.setDuration(220)
+        bounce.setStartValue(origin)
+        bounce.setKeyValueAt(0.0, origin)
+        bounce.setKeyValueAt(0.35, QPoint(origin.x(), origin.y() - 14))
+        bounce.setKeyValueAt(1.0, origin)
+        bounce.setEasingCurve(QEasingCurve.OutQuad)
 
-        # 上升
-        self.animation = QPropertyAnimation(self, b"pos")
-        self.animation.setDuration(duration // 2)
-        self.animation.setStartValue(self.pos())
-        self.animation.setEndValue(QPoint(self.x(), self.y() - jump_height))
-        self.animation.setEasingCurve(QEasingCurve.OutQuad)
-
-        # 下降
-        self.animation.finished.connect(self._jump_down)
-        self.animation.start()
-
-    def _jump_down(self):
-        """跳跃下落"""
-        if not self.original_geometry:
-            self.is_animating = False
-            return
-        self.animation = QPropertyAnimation(self, b"pos")
-        self.animation.setDuration(200)
-        self.animation.setStartValue(self.pos())
-        self.animation.setEndValue(self.original_geometry.topLeft())
-        self.animation.setEasingCurve(QEasingCurve.InQuad)
-        self.animation.finished.connect(self._animation_finished)
-        self.animation.start()
+        group.addAnimation(dip)
+        group.addAnimation(up)
+        group.addAnimation(down)
+        group.addAnimation(bounce)
+        group.finished.connect(self._animation_finished)
+        self.animation = group
+        group.start()
 
     def _animate_squash(self):
-        """压扁回弹动画"""
+        """压扁：柔和下压 → 过冲回弹 → 归位（替代生硬 OutElastic）"""
         if self.is_animating:
             return
+        self._stop_running_animation()
         self.is_animating = True
-        self.original_geometry = self.geometry()
+        self.original_geometry = QRect(self.geometry())
+        base = QRect(self.original_geometry)
 
-        size = self.width()
-        squash_ratio = 0.6  # 压扁到60%高度
-        stretch_ratio = 1.15  # 横向拉伸到115%
+        pressed = self._squashed_rect(base, 1.18, 0.72)
+        overshoot = self._squashed_rect(base, 0.94, 1.06)
 
-        # 压扁
-        new_width = int(size * stretch_ratio)
-        new_height = int(size * squash_ratio)
-        new_x = self.x() - (new_width - size) // 2
-        new_y = self.y() + (size - new_height)
+        group = QSequentialAnimationGroup(self)
+        press = self._make_geo_anim(base, pressed, 160, QEasingCurve.InOutSine)
+        hold = self._make_geo_anim(pressed, pressed, 40, QEasingCurve.Linear)
+        release = self._make_geo_anim(pressed, overshoot, 220, QEasingCurve.OutBack)
+        settle = self._make_geo_anim(overshoot, base, 160, QEasingCurve.OutSine)
 
-        self.animation = QPropertyAnimation(self, b"geometry")
-        self.animation.setDuration(150)
-        self.animation.setStartValue(self.geometry())
-        self.animation.setEndValue(self.geometry().adjusted(
-            (new_width - size) // -2, size - new_height,
-            (new_width - size) // 2, 0
-        ))
-        self.animation.setEasingCurve(QEasingCurve.InQuad)
-        self.animation.finished.connect(self._squash_rebound)
-        self.animation.start()
+        # OutBack 过冲幅度略收一点，避免抖太狠
+        release.setEasingCurve(QEasingCurve(QEasingCurve.OutBack))
+        curve = release.easingCurve()
+        curve.setAmplitude(1.05)
+        curve.setOvershoot(1.2)
+        release.setEasingCurve(curve)
 
-    def _squash_rebound(self):
-        """压扁后回弹"""
-        if not self.original_geometry:
-            self.is_animating = False
-            return
-        # 回弹到略大再恢复
-        size = self.original_geometry.width()
-        rebound_size = int(size * 1.08)
-
-        self.animation = QPropertyAnimation(self, b"geometry")
-        self.animation.setDuration(200)
-        self.animation.setStartValue(self.geometry())
-        self.animation.setEndValue(self.original_geometry)
-        self.animation.setEasingCurve(QEasingCurve.OutElastic)
-        self.animation.finished.connect(self._animation_finished)
-        self.animation.start()
+        group.addAnimation(press)
+        group.addAnimation(hold)
+        group.addAnimation(release)
+        group.addAnimation(settle)
+        group.finished.connect(self._animation_finished)
+        self.animation = group
+        group.start()
 
     def _animate_shake(self):
-        """左右抖动动画"""
+        """抖动：幅度衰减的平滑左右摆动"""
         if self.is_animating:
             return
+        self._stop_running_animation()
         self.is_animating = True
-        self.original_geometry = self.geometry()
+        self.original_geometry = QRect(self.geometry())
+        origin = self.original_geometry.topLeft()
+        y = origin.y()
 
-        shake_distance = 12
-        duration = 300
+        # 衰减位移：越晃越小
+        offsets = [16, -13, 10, -7, 4, -2, 0]
+        group = QSequentialAnimationGroup(self)
+        prev = origin
+        for i, ox in enumerate(offsets):
+            end = QPoint(origin.x() + ox, y)
+            duration = 55 + i * 8
+            step = self._make_pos_anim(prev, end, duration, QEasingCurve.InOutSine)
+            group.addAnimation(step)
+            prev = end
 
-        # 使用定时器实现多次抖动
-        self._shake_count = 0
-        self._max_shakes = 5
-        self._shake_timer = QTimer(self)
-        self._shake_timer.timeout.connect(self._shake_step)
-        self._shake_timer.start(duration // self._max_shakes)
-
-    def _shake_step(self):
-        """抖动的一步"""
-        self._shake_count += 1
-        if self._shake_count >= self._max_shakes:
-            self._shake_timer.stop()
-            # 回到原位
-            self.setGeometry(self.original_geometry)
-            self._animation_finished()
-            return
-
-        direction = 1 if self._shake_count % 2 == 1 else -1
-        offset = 12 if self._shake_count < self._max_shakes - 1 else 0
-        self.move(self.original_geometry.x() + direction * offset, self.y())
+        group.finished.connect(self._animation_finished)
+        self.animation = group
+        group.start()
 
     def _animation_finished(self):
-        """动画结束"""
+        """动画结束，确保几何归位"""
         self.is_animating = False
         self.animation = None
-        if self.original_geometry:
+        if self.original_geometry is not None:
             self.setGeometry(self.original_geometry)
             self.original_geometry = None
 
@@ -536,31 +567,27 @@ class EggplantPet(QWidget):
         text = random.choice(DIALOGUES)
         self._show_bubble(text)
 
-    def _show_bubble(self, text):
+    def _show_bubble(self, text, duration_ms=2500):
         """显示对话气泡"""
         self._hide_bubble()
 
-        self.bubble = BubbleWidget(text)
-        # 气泡显示在角色上方居中
+        self.bubble = SpeechBubble(text)
         bubble_x = self.x() + self.width() // 2 - self.bubble.width() // 2
         bubble_y = self.y() - self.bubble.height() - 5
 
-        # 确保气泡不超出屏幕
         screen = QApplication.primaryScreen().availableGeometry()
         if bubble_x < 10:
             bubble_x = 10
         if bubble_x + self.bubble.width() > screen.width() - 10:
             bubble_x = screen.width() - self.bubble.width() - 10
         if bubble_y < 10:
-            # 如果上方空间不够，显示在下方
             bubble_y = self.y() + self.height() + 5
 
         self.bubble.move(bubble_x, bubble_y)
         self.bubble.show()
         apply_native_topmost(self.bubble, self.is_stay_on_top)
 
-        # 2.5秒后自动消失
-        self.bubble_timer.start(2500)
+        self.bubble_timer.start(duration_ms)
 
     def _hide_bubble(self):
         """隐藏对话气泡"""
@@ -571,6 +598,9 @@ class EggplantPet(QWidget):
 
     def closeEvent(self, event):
         self._hide_bubble()
+        self._hide_chat_input()
+        if self.tray:
+            self.tray.hide()
         event.accept()
         app = QApplication.instance()
         if app is not None:
@@ -583,7 +613,8 @@ def main():
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(True)
+    # 托盘常驻时，隐藏主窗口不应退出进程
+    app.setQuitOnLastWindowClosed(False)
 
     pet = EggplantPet()
 

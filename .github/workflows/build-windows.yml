@@ -29,6 +29,9 @@ jobs:
           --windowed
           --name "茄子桌宠"
           --add-data "eggplant.png;."
+          --hidden-import bubble
+          --hidden-import chat
+          --hidden-import tray
           main.py
 
       - name: Upload EXE
