@@ -7,11 +7,78 @@
 import sys
 import os
 import random
+from ctypes import CFUNCTYPE, c_char_p, c_long, c_void_p, cdll, util
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QMenu, QAction,
                              QVBoxLayout, QHBoxLayout, QPushButton, QDialog,
                              QSlider, QGraphicsDropShadowEffect)
-from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QSize, pyqtProperty
+from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QSize, QRect, pyqtProperty
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QFontMetrics, QPainterPath
+
+
+# macOS: Qt 的 WindowStaysOnTopHint 约等于 level=8；此前误用 NSFloatingWindowLevel=3 反而更低
+# 置顶用 NSStatusWindowLevel=25，才能压过普通应用窗口
+_MAC_STATUS_LEVEL = 25
+_MAC_NORMAL_LEVEL = 0
+# CanJoinAllSpaces | Stationary | FullScreenAuxiliary
+_MAC_COLLECTION_BEHAVIOR = (1 << 0) | (1 << 4) | (1 << 8)
+_HWND_TOPMOST = -1
+_HWND_NOTOPMOST = -2
+_SWP_NOMOVE = 0x0002
+_SWP_NOSIZE = 0x0001
+_SWP_SHOWWINDOW = 0x0040
+
+
+def apply_native_topmost(widget, enabled):
+    """用系统原生 API 设置置顶（Qt 的 WindowStaysOnTopHint 在 macOS 上常失效）"""
+    if widget is None:
+        return
+    try:
+        if sys.platform == "darwin":
+            _macos_set_window_level(widget, enabled)
+        elif sys.platform == "win32":
+            _windows_set_topmost(widget, enabled)
+    except Exception:
+        pass
+
+
+def _macos_set_window_level(widget, enabled):
+    libobjc = cdll.LoadLibrary(util.find_library("objc"))
+    sel_registerName = libobjc.sel_registerName
+    sel_registerName.restype = c_void_p
+    sel_registerName.argtypes = [c_char_p]
+
+    msg_void = CFUNCTYPE(c_void_p, c_void_p, c_void_p)(("objc_msgSend", libobjc))
+    msg_set_long = CFUNCTYPE(None, c_void_p, c_void_p, c_long)(("objc_msgSend", libobjc))
+    msg_set_bool = CFUNCTYPE(None, c_void_p, c_void_p, c_long)(("objc_msgSend", libobjc))
+
+    ns_view = c_void_p(int(widget.winId()))
+    ns_window = msg_void(ns_view, sel_registerName(b"window"))
+    if not ns_window:
+        return
+
+    # 失焦时不要自动隐藏（Tool 窗口默认可能 hidesOnDeactivate）
+    msg_set_bool(ns_window, sel_registerName(b"setHidesOnDeactivate:"), 0)
+
+    if enabled:
+        msg_set_long(ns_window, sel_registerName(b"setLevel:"), _MAC_STATUS_LEVEL)
+        msg_set_long(
+            ns_window,
+            sel_registerName(b"setCollectionBehavior:"),
+            _MAC_COLLECTION_BEHAVIOR,
+        )
+        msg_void(ns_window, sel_registerName(b"orderFrontRegardless"))
+    else:
+        msg_set_long(ns_window, sel_registerName(b"setLevel:"), _MAC_NORMAL_LEVEL)
+
+
+def _windows_set_topmost(widget, enabled):
+    user32 = cdll.LoadLibrary("user32")
+    hwnd = int(widget.winId())
+    insert_after = _HWND_TOPMOST if enabled else _HWND_NOTOPMOST
+    user32.SetWindowPos(
+        hwnd, insert_after, 0, 0, 0, 0,
+        _SWP_NOMOVE | _SWP_NOSIZE | _SWP_SHOWWINDOW,
+    )
 
 
 # ============== 对话气泡内容 ==============
@@ -161,8 +228,7 @@ class EggplantPet(QWidget):
 
         # 初始位置（屏幕右下角）
         self._init_position()
-
-        self.show()
+        self._apply_stay_on_top()
 
     def _get_resource_path(self, filename):
         """获取资源文件路径（兼容打包后）"""
@@ -278,10 +344,17 @@ class EggplantPet(QWidget):
 
         # 退出
         quit_action = QAction("退出", self)
-        quit_action.triggered.connect(self.close)
+        quit_action.triggered.connect(self._quit_app)
         menu.addAction(quit_action)
 
         menu.exec_(event.globalPos())
+
+    def _quit_app(self):
+        """彻底退出（macOS 上 Tool 窗口 close 不会结束进程，图标会留在程序坞）"""
+        self._hide_bubble()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
     # ============== 大小调整 ==============
     def _set_scale(self, scale):
@@ -302,13 +375,27 @@ class EggplantPet(QWidget):
     def _toggle_stay_on_top(self):
         """切换置顶状态"""
         self.is_stay_on_top = not self.is_stay_on_top
-        flags = self.windowFlags()
+        self._apply_stay_on_top()
+
+    def _apply_stay_on_top(self):
+        """应用置顶状态（Qt 标志 + 原生窗口层级）"""
+        flags = Qt.FramelessWindowHint | Qt.Tool
         if self.is_stay_on_top:
             flags |= Qt.WindowStaysOnTopHint
-        else:
-            flags &= ~Qt.WindowStaysOnTopHint
+        pos = self.pos()
         self.setWindowFlags(flags)
+        self.move(pos)
         self.show()
+        self.raise_()
+        # 立即设置一次，并延后补设（等 Qt 建好 NSWindow 后再压高层级）
+        self._refresh_native_topmost()
+        QTimer.singleShot(0, self._refresh_native_topmost)
+        QTimer.singleShot(100, self._refresh_native_topmost)
+
+    def _refresh_native_topmost(self):
+        apply_native_topmost(self, self.is_stay_on_top)
+        if self.bubble is not None:
+            apply_native_topmost(self.bubble, self.is_stay_on_top)
 
     # ============== 互动动画 ==============
     def _trigger_interaction(self):
@@ -470,6 +557,7 @@ class EggplantPet(QWidget):
 
         self.bubble.move(bubble_x, bubble_y)
         self.bubble.show()
+        apply_native_topmost(self.bubble, self.is_stay_on_top)
 
         # 2.5秒后自动消失
         self.bubble_timer.start(2500)
@@ -484,6 +572,9 @@ class EggplantPet(QWidget):
     def closeEvent(self, event):
         self._hide_bubble()
         event.accept()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
 
 def main():
