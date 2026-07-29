@@ -31,7 +31,9 @@ jobs:
           --onefile
           --windowed
           --name "茄子桌宠"
+          --icon=eggplant.ico
           --add-data "eggplant.png;."
+          --add-data "eggplant.ico;."
           --hidden-import bubble
           --hidden-import chat
           --hidden-import tray

@@ -13,7 +13,7 @@ from PyQt5.QtCore import (
     Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QRect,
     QSequentialAnimationGroup,
 )
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPixmap, QIcon
 
 from bubble import SpeechBubble, ChatInputBubble
 from chat import reply as chat_reply
@@ -141,6 +141,8 @@ class EggplantPet(QWidget):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setWindowTitle("茄子桌宠")
+        self.setWindowIcon(QIcon(self._get_resource_path("eggplant.png")))
 
         # 角色标签
         self.pet_label = QLabel(self)
@@ -613,8 +615,18 @@ def main():
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     app = QApplication(sys.argv)
+    app.setApplicationName("茄子桌宠")
     # 托盘常驻时，隐藏主窗口不应退出进程
     app.setQuitOnLastWindowClosed(False)
+
+    # 应用/程序坞图标（与托盘一致用茄子图）
+    icon_path = os.path.join(
+        getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))),
+        "eggplant.png",
+    )
+    app_icon = QIcon(icon_path)
+    if not app_icon.isNull():
+        app.setWindowIcon(app_icon)
 
     pet = EggplantPet()
 

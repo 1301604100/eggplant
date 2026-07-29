@@ -74,6 +74,7 @@ eggplant_pet/
 ├── chat.py                          # 本地关键词回复
 ├── tray.py                          # 系统托盘
 ├── eggplant.png                     # 茄子角色图片（透明背景）
+├── eggplant.ico                     # Windows 应用 / EXE 图标
 ├── build.bat                        # Windows 本机打包脚本
 ├── .github/workflows/build-windows.yml  # GitHub Actions 云端打包
 └── README.md                        # 说明文档
@@ -111,7 +112,7 @@ A: 右键点击角色，选择"退出"。
 A: 确保已安装 Python 和 pip，尝试手动执行：
    ```
    pip install PyQt5 pyinstaller
-   pyinstaller --onefile --windowed --name "茄子桌宠" --add-data "eggplant.png;." main.py
+   pyinstaller --onefile --windowed --name "茄子桌宠" --icon=eggplant.ico --add-data "eggplant.png;." main.py
    ```
 
 ---
