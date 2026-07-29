@@ -32,14 +32,22 @@
    python main.py
    ```
 
-### 方式二：打包成 EXE（推荐）
+### 方式二：GitHub Actions 云端打包（无需本机 Windows / Python）
+
+1. 将代码推送到 GitHub（`main` 分支）
+2. 打开仓库 **Actions** 页面，等待 **Build Windows EXE** 完成
+3. 进入该次运行详情，在 **Artifacts** 中下载 `eggplant-pet-windows`
+4. 解压得到 `茄子桌宠.exe`，在 Windows 上双击运行
+
+也可在 Actions 页面点击 **Run workflow** 手动触发打包。
+
+> 💡 打包后的 EXE 是单文件，内置 Python 运行时，目标电脑无需安装 Python
+
+### 方式三：本机 Windows 打包
 
 1. 确保已安装 Python 3.8+
 2. 双击运行 `build.bat` 脚本
-3. 等待打包完成，生成的 EXE 在 `dist` 文件夹中
-4. 双击 `茄子桌宠.exe` 即可运行
-
-> 💡 打包后的 EXE 是单文件，可以单独复制到任意位置运行
+3. 生成的 EXE 在 `dist` 文件夹中
 
 ## 🎮 使用说明
 
@@ -54,10 +62,11 @@
 
 ```
 eggplant_pet/
-├── main.py          # 主程序源码
-├── eggplant.png     # 茄子角色图片（透明背景）
-├── build.bat        # Windows 打包脚本
-└── README.md        # 说明文档
+├── main.py                          # 主程序源码
+├── eggplant.png                     # 茄子角色图片（透明背景）
+├── build.bat                        # Windows 本机打包脚本
+├── .github/workflows/build-windows.yml  # GitHub Actions 云端打包
+└── README.md                        # 说明文档
 ```
 
 ## 🔧 自定义修改
