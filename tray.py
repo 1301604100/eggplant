@@ -8,7 +8,7 @@ from PyQt5.QtGui import QIcon
 class PetTray:
     """桌宠系统托盘。callbacks: show_pet, hide_pet, open_chat, quit"""
 
-    def __init__(self, parent, icon_path, callbacks):
+    def __init__(self, parent, icon_path, callbacks, extra_menu_builder=None):
         self.parent = parent
         self.callbacks = callbacks or {}
         self.tray_icon = None
@@ -36,6 +36,10 @@ class PetTray:
         chat_action = QAction("聊聊天", parent)
         chat_action.triggered.connect(self._on_chat)
         menu.addAction(chat_action)
+
+        if extra_menu_builder:
+            menu.addSeparator()
+            extra_menu_builder(menu)
 
         menu.addSeparator()
 

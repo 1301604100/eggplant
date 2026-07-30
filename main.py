@@ -15,6 +15,7 @@ from PyQt5.QtCore import (
 )
 from PyQt5.QtGui import QPixmap, QIcon
 
+from appearance import AppearanceManager, STYLE_LABELS, IDLE_ROW
 from bubble import SpeechBubble, ChatInputBubble
 from chat import reply as chat_reply
 from tray import PetTray
@@ -131,7 +132,13 @@ class EggplantPet(QWidget):
         self.is_animating = False
         self.animation_index = 0  # 轮流触发互动的索引
 
-        # 加载图片
+        # 外观风格
+        self.appearance = AppearanceManager(self._get_resource_path)
+        self._sprite_row = IDLE_ROW
+        self._sprite_col = 0
+        self._sprite_playing_action = False
+
+        # 加载经典图片
         self.original_pixmap = QPixmap(self._get_resource_path("eggplant.png"))
         if self.original_pixmap.isNull():
             print("错误：无法加载图片 eggplant.png")
@@ -156,6 +163,12 @@ class EggplantPet(QWidget):
         self.bubble_timer.setSingleShot(True)
         self.bubble_timer.timeout.connect(self._hide_bubble)
 
+        # 精灵表待机 / 动作播放
+        self.idle_timer = QTimer(self)
+        self.idle_timer.timeout.connect(self._sprite_idle_tick)
+        self.action_timer = QTimer(self)
+        self.action_timer.timeout.connect(self._sprite_action_tick)
+
         # 拖动相关
         self.drag_position = None
         self.is_dragging = False
@@ -175,12 +188,14 @@ class EggplantPet(QWidget):
                 "open_chat": self._open_chat,
                 "quit": self._quit_app,
             },
+            extra_menu_builder=self._populate_style_menu,
         )
         self.tray.show()
 
         # 初始位置（屏幕右下角）
         self._init_position()
         self._apply_stay_on_top()
+        self._sync_sprite_playback()
 
     def _get_resource_path(self, filename):
         """获取资源文件路径（兼容打包后）"""
@@ -197,10 +212,19 @@ class EggplantPet(QWidget):
         self.setGeometry(x, y, size, size)
         self.pet_label.setGeometry(0, 0, size, size)
 
+    def _current_display_pixmap(self):
+        """当前应显示的原图像（经典图或精灵帧）"""
+        if self.appearance.is_sprite_style():
+            frame = self.appearance.get_frame(self._sprite_row, self._sprite_col)
+            if not frame.isNull():
+                return frame
+        return self.original_pixmap
+
     def _update_pixmap(self):
         """更新显示的图片（根据当前缩放）"""
         size = int(self.base_size * self.current_scale)
-        scaled = self.original_pixmap.scaled(
+        source = self._current_display_pixmap()
+        scaled = source.scaled(
             size, size,
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation
@@ -263,9 +287,80 @@ class EggplantPet(QWidget):
             self.move(int(center_x - new_size / 2), int(center_y - new_size / 2))
             self._hide_bubble()
 
+    def _populate_style_menu(self, parent_menu):
+        """外观风格子菜单（右键 / 托盘共用）"""
+        style_menu = parent_menu.addMenu("外观风格")
+        for style_id, label in STYLE_LABELS.items():
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(self.appearance.style == style_id)
+            action.triggered.connect(lambda checked=False, s=style_id: self._set_appearance_style(s))
+            style_menu.addAction(action)
+        return style_menu
+
+    def _set_appearance_style(self, style_id):
+        if not self.appearance.set_style(style_id):
+            return
+        self._stop_running_animation()
+        self.is_animating = False
+        self._sprite_playing_action = False
+        self._sprite_row = IDLE_ROW
+        self._sprite_col = 0
+        self._update_pixmap()
+        self._sync_sprite_playback()
+        tip = STYLE_LABELS.get(style_id, style_id)
+        self._show_bubble(f"换成{tip}啦~", duration_ms=1800)
+
+    def _sync_sprite_playback(self):
+        """按当前风格启停精灵待机动画"""
+        self.idle_timer.stop()
+        self.action_timer.stop()
+        if self.appearance.is_sprite_style() and not self._sprite_playing_action:
+            self.idle_timer.start(380)
+        else:
+            self._sprite_row = IDLE_ROW
+            self._sprite_col = 0
+            self._update_pixmap()
+
+    def _sprite_idle_tick(self):
+        if not self.appearance.is_sprite_style() or self._sprite_playing_action:
+            return
+        n = self.appearance.idle_frame_count()
+        self._sprite_row = IDLE_ROW
+        self._sprite_col = (self._sprite_col + 1) % max(1, n)
+        self._update_pixmap()
+
+    def _start_sprite_action(self, row):
+        self.idle_timer.stop()
+        self._sprite_playing_action = True
+        self.is_animating = True
+        self._sprite_row = row % max(1, self.appearance.action_row_count())
+        self._sprite_col = 0
+        self._update_pixmap()
+        self.action_timer.start(280)
+
+    def _sprite_action_tick(self):
+        if not self._sprite_playing_action:
+            self.action_timer.stop()
+            return
+        n = self.appearance.action_frame_count(self._sprite_row)
+        self._sprite_col += 1
+        if self._sprite_col >= n:
+            self.action_timer.stop()
+            self._sprite_playing_action = False
+            self.is_animating = False
+            self._sprite_row = IDLE_ROW
+            self._sprite_col = 0
+            self._update_pixmap()
+            self._sync_sprite_playback()
+            return
+        self._update_pixmap()
+
     def contextMenuEvent(self, event):
         """右键菜单"""
         menu = QMenu(self)
+
+        self._populate_style_menu(menu)
 
         # 调整大小子菜单
         size_menu = menu.addMenu("调整大小")
@@ -414,7 +509,14 @@ class EggplantPet(QWidget):
 
     # ============== 互动动画 ==============
     def _trigger_interaction(self):
-        """触发互动（轮流播放不同动画）"""
+        """触发互动（精灵表动作 或 经典几何动画）"""
+        if self.appearance.is_sprite_style():
+            row = self.animation_index % max(1, self.appearance.action_row_count())
+            self.animation_index += 1
+            self._start_sprite_action(row)
+            QTimer.singleShot(200, self._show_random_bubble)
+            return
+
         animations = [
             self._animate_jump,
             self._animate_squash,

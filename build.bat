@@ -26,7 +26,7 @@ echo 依赖安装完成
 echo.
 
 echo [3/3] 打包 EXE 文件...
-pyinstaller --onefile --windowed --name "茄子桌宠" --icon=eggplant.ico --add-data "eggplant.png;." --add-data "eggplant.ico;." --hidden-import bubble --hidden-import chat --hidden-import tray main.py
+pyinstaller --onefile --windowed --name "茄子桌宠" --icon=eggplant.ico --add-data "eggplant.png;." --add-data "eggplant.ico;." --add-data "eggplant-spritesheet-plush-rgba.png;." --add-data "eggplant-spritesheet-vector-rgba.png;." --hidden-import bubble --hidden-import chat --hidden-import tray --hidden-import appearance main.py
 
 if errorlevel 1 (
     echo.
