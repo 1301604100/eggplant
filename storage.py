@@ -36,6 +36,12 @@ def load():
         return data
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as e:
         print("storage.load: corrupt data, resetting:", e)
+        bak = path.with_name(path.name + ".bak")
+        try:
+            if path.is_file():
+                path.replace(bak)
+        except OSError as bak_err:
+            print("storage.load: backup failed:", bak_err)
         data = {"bookmarks": [], "todos": []}
         save(data)
         return data

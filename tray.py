@@ -34,6 +34,7 @@ class PetTray:
         menu.addSeparator()
 
         bookmarks_menu = menu.addMenu("常用网址")
+        self._populate_bookmarks(bookmarks_menu)
         bookmarks_menu.aboutToShow.connect(
             lambda: self._populate_bookmarks(bookmarks_menu)
         )

@@ -65,6 +65,7 @@ class TodoPanel(QWidget):
                 background: rgba(255, 255, 255, 230);
                 border: 1px solid #ddd;
                 border-radius: 8px;
+                padding: 4px 8px;
             }
             QPushButton {
                 background: #7c3aed;
@@ -108,13 +109,18 @@ class TodoPanel(QWidget):
             self.list.setItemWidget(item, row)
 
     def _toggle(self, todo_id, done):
-        storage.update_todo(todo_id, done=done)
+        try:
+            storage.update_todo(todo_id, done=done)
+        except KeyError:
+            pass
         self.reload()
 
     def _edit(self, todo_id, text):
         try:
             storage.update_todo(todo_id, text=text)
             self.hint.setText("")
+        except KeyError:
+            pass
         except ValueError:
             self.hint.setText("待办文案不能为空")
             self.reload()

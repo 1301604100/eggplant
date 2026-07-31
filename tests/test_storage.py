@@ -32,9 +32,14 @@ class TestStorage(unittest.TestCase):
     def test_load_corrupt_recovers(self):
         p = storage.data_path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("{not json", encoding="utf-8")
+        corrupt = "{not json"
+        p.write_text(corrupt, encoding="utf-8")
         data = storage.load()
         self.assertEqual(data, storage.DEFAULT_DATA)
+        bak = p.with_name(p.name + ".bak")
+        self.assertTrue(bak.is_file())
+        self.assertEqual(bak.read_text(encoding="utf-8"), corrupt)
+        self.assertEqual(json.loads(p.read_text(encoding="utf-8")), storage.DEFAULT_DATA)
 
     def test_bookmark_crud(self):
         b = storage.add_bookmark("GH", "github.com")
@@ -52,6 +57,10 @@ class TestStorage(unittest.TestCase):
             storage.add_bookmark("", "https://a.com")
         with self.assertRaises(ValueError):
             storage.add_bookmark("a", "  ")
+
+    def test_update_todo_missing_id_raises_keyerror(self):
+        with self.assertRaises(KeyError):
+            storage.update_todo("missing-id", text="nope")
 
     def test_todo_crud_and_clear_completed(self):
         t1 = storage.add_todo("写周报")

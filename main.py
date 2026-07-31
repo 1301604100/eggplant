@@ -419,18 +419,18 @@ class EggplantPet(QWidget):
         submenu.clear()
         bookmarks = storage.list_bookmarks()
         if not bookmarks:
-            empty = QAction("暂无网址", self)
+            empty = QAction("暂无网址", submenu)
             empty.setEnabled(False)
             submenu.addAction(empty)
         else:
             for b in bookmarks:
-                action = QAction(b["alias"], self)
+                action = QAction(b["alias"], submenu)
                 action.triggered.connect(
                     lambda _=False, u=b["url"]: self._open_bookmark_url(u)
                 )
                 submenu.addAction(action)
         submenu.addSeparator()
-        manage = QAction("管理…", self)
+        manage = QAction("管理…", submenu)
         manage.triggered.connect(self._toggle_bookmark_panel)
         submenu.addAction(manage)
 
@@ -720,6 +720,7 @@ class EggplantPet(QWidget):
     def closeEvent(self, event):
         self._hide_bubble()
         self._hide_chat_input()
+        self._hide_panels()
         if self.tray:
             self.tray.hide()
         event.accept()

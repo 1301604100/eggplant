@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """常用网址管理悬浮面板。"""
 
-from PyQt5.QtCore import Qt, QEvent
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
-    QLineEdit, QPushButton, QLabel, QMessageBox,
+    QLineEdit, QPushButton, QLabel,
 )
 
 import storage
@@ -95,6 +95,8 @@ class BookmarkPanel(QWidget):
             item = QListWidgetItem("%s  —  %s" % (b["alias"], b["url"]))
             item.setData(Qt.UserRole, b["id"])
             self.list.addItem(item)
+        self.alias_edit.clear()
+        self.url_edit.clear()
 
     def _on_select(self, current, _previous):
         if current is None:
