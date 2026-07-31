@@ -2,7 +2,8 @@ name: Build Windows EXE
 
 on:
   push:
-    branches: [main, master]
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -21,8 +22,15 @@ jobs:
         run: |
           $v = (Get-Content -Raw VERSION).Trim()
           if (-not $v) { throw "VERSION is empty" }
+          $expectedTag = "v$v"
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $tag = $env:GITHUB_REF_NAME
+            if ($tag -ne $expectedTag) {
+              throw "Tag '$tag' does not match VERSION file ('$expectedTag'). Bump VERSION before tagging."
+            }
+          }
           echo "value=$v" >> $env:GITHUB_OUTPUT
-          echo "tag=v$v" >> $env:GITHUB_OUTPUT
+          echo "tag=$expectedTag" >> $env:GITHUB_OUTPUT
 
       - name: Set up Python
         uses: actions/setup-python@v5

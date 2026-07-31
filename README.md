@@ -48,7 +48,7 @@
 
 Windows 安装版会在启动约 3 秒后静默检查更新；有新版本时会弹出确认气泡，确认后自动下载并替换 EXE 后重启。也可在右键/托盘菜单选择「检查更新」手动检查；选择「稍后」则本会话不再自动弹出，但菜单仍可再次检查。
 
-发新版：修改根目录 `VERSION` → 推送 `main`（或在 Actions 里手动 **Run workflow**）。同一 `VERSION` 重复推送会覆盖同 tag 资产。
+发新版：修改根目录 `VERSION` → 打并推送 tag（如 `git tag v1.0.1 && git push origin v1.0.1`）。只有 `v*` tag 变动才会触发云端打包；也可在 Actions 里手动 **Run workflow**。同一 tag 重复推送会覆盖该版本资产。
 
 > 💡 打包后的 EXE 是单文件，内置 Python 运行时，目标电脑无需安装 Python  
 > Artifacts 仍会保留一份临时产物，但请优先用 Releases 链接分享
