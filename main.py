@@ -7,6 +7,7 @@
 import sys
 import os
 import random
+import webbrowser
 from ctypes import CFUNCTYPE, c_char_p, c_long, c_void_p, cdll, util
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QMenu, QAction
 from PyQt5.QtCore import (
@@ -18,6 +19,9 @@ from PyQt5.QtGui import QPixmap, QIcon
 from bubble import SpeechBubble, ChatInputBubble
 from chat import reply as chat_reply
 from tray import PetTray
+from bookmarks import BookmarkPanel
+from todos import TodoPanel
+import storage
 
 
 # macOS: Qt 的 WindowStaysOnTopHint 约等于 level=8；此前误用 NSFloatingWindowLevel=3 反而更低
@@ -152,6 +156,8 @@ class EggplantPet(QWidget):
         # 对话气泡 / 聊天输入
         self.bubble = None
         self.chat_input = None
+        self.bookmark_panel = None
+        self.todo_panel = None
         self.bubble_timer = QTimer(self)
         self.bubble_timer.setSingleShot(True)
         self.bubble_timer.timeout.connect(self._hide_bubble)
@@ -229,7 +235,7 @@ class EggplantPet(QWidget):
                 self.move(event.globalPos() - self.drag_position)
                 # 移动时隐藏气泡
                 self._hide_bubble()
-                self._hide_chat_input()
+                self._reposition_open_panels()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -288,6 +294,15 @@ class EggplantPet(QWidget):
 
         menu.addSeparator()
 
+        bookmarks_menu = menu.addMenu("常用网址")
+        self._populate_bookmarks_menu(bookmarks_menu)
+
+        todo_action = QAction("待办", self)
+        todo_action.triggered.connect(self._toggle_todo_panel)
+        menu.addAction(todo_action)
+
+        menu.addSeparator()
+
         chat_action = QAction("聊聊天", self)
         chat_action.triggered.connect(self._open_chat)
         menu.addAction(chat_action)
@@ -316,6 +331,7 @@ class EggplantPet(QWidget):
         """彻底退出（macOS 上 Tool 窗口 close 不会结束进程，图标会留在程序坞）"""
         self._hide_bubble()
         self._hide_chat_input()
+        self._hide_panels()
         if self.tray:
             self.tray.hide()
         app = QApplication.instance()
@@ -325,6 +341,7 @@ class EggplantPet(QWidget):
     def _hide_pet(self):
         self._hide_bubble()
         self._hide_chat_input()
+        self._hide_panels()
         self.hide()
 
     def _show_pet(self):
@@ -336,6 +353,7 @@ class EggplantPet(QWidget):
         """打开聊天输入气泡"""
         self._show_pet()
         self._hide_bubble()
+        self._close_exclusive_ui(keep="chat")
         if self.chat_input is None:
             self.chat_input = ChatInputBubble(on_send=self._on_chat_send)
         self._position_chat_input()
@@ -347,6 +365,99 @@ class EggplantPet(QWidget):
     def _hide_chat_input(self):
         if self.chat_input is not None:
             self.chat_input.hide()
+
+    def _hide_panels(self):
+        if self.bookmark_panel is not None:
+            self.bookmark_panel.hide()
+        if self.todo_panel is not None:
+            self.todo_panel.hide()
+
+    def _close_exclusive_ui(self, keep=None):
+        """keep: None | 'chat' | 'bookmarks' | 'todos'"""
+        if keep != "chat":
+            self._hide_chat_input()
+        if keep != "bookmarks" and self.bookmark_panel is not None:
+            self.bookmark_panel.hide()
+        if keep != "todos" and self.todo_panel is not None:
+            self.todo_panel.hide()
+
+    def _position_panel(self, panel):
+        if panel is None:
+            return
+        panel.adjustSize()
+        x = self.x() + self.width() // 2 - panel.width() // 2
+        y = self.y() + self.height() + 8
+        screen = QApplication.primaryScreen().availableGeometry()
+        if x < 10:
+            x = 10
+        if x + panel.width() > screen.width() - 10:
+            x = screen.width() - panel.width() - 10
+        if y + panel.height() > screen.height() - 10:
+            y = max(10, self.y() - panel.height() - 8)
+        panel.move(x, y)
+
+    def _reposition_open_panels(self):
+        if self.bookmark_panel is not None and self.bookmark_panel.isVisible():
+            self._position_panel(self.bookmark_panel)
+        if self.todo_panel is not None and self.todo_panel.isVisible():
+            self._position_panel(self.todo_panel)
+        if self.chat_input is not None and self.chat_input.isVisible():
+            self._position_chat_input()
+
+    def _open_bookmark_url(self, url):
+        try:
+            ok = webbrowser.open(url)
+            if not ok:
+                self._show_bubble("打不开这个链接", duration_ms=2500)
+        except Exception:
+            self._show_bubble("打不开这个链接", duration_ms=2500)
+
+    def _populate_bookmarks_menu(self, submenu):
+        submenu.clear()
+        bookmarks = storage.list_bookmarks()
+        if not bookmarks:
+            empty = QAction("暂无网址", self)
+            empty.setEnabled(False)
+            submenu.addAction(empty)
+        else:
+            for b in bookmarks:
+                action = QAction(b["alias"], self)
+                action.triggered.connect(
+                    lambda _=False, u=b["url"]: self._open_bookmark_url(u)
+                )
+                submenu.addAction(action)
+        submenu.addSeparator()
+        manage = QAction("管理…", self)
+        manage.triggered.connect(self._toggle_bookmark_panel)
+        submenu.addAction(manage)
+
+    def _toggle_bookmark_panel(self):
+        self._show_pet()
+        if self.bookmark_panel is not None and self.bookmark_panel.isVisible():
+            self.bookmark_panel.hide()
+            return
+        self._close_exclusive_ui(keep="bookmarks")
+        if self.bookmark_panel is None:
+            self.bookmark_panel = BookmarkPanel()
+        self.bookmark_panel.reload()
+        self._position_panel(self.bookmark_panel)
+        self.bookmark_panel.show()
+        self.bookmark_panel.raise_()
+        apply_native_topmost(self.bookmark_panel, self.is_stay_on_top)
+
+    def _toggle_todo_panel(self):
+        self._show_pet()
+        if self.todo_panel is not None and self.todo_panel.isVisible():
+            self.todo_panel.hide()
+            return
+        self._close_exclusive_ui(keep="todos")
+        if self.todo_panel is None:
+            self.todo_panel = TodoPanel()
+        self.todo_panel.reload()
+        self._position_panel(self.todo_panel)
+        self.todo_panel.show()
+        self.todo_panel.raise_()
+        apply_native_topmost(self.todo_panel, self.is_stay_on_top)
 
     def _position_chat_input(self):
         if self.chat_input is None:
@@ -384,6 +495,7 @@ class EggplantPet(QWidget):
         self._update_pixmap()
         self.move(int(center_x - new_size / 2), int(center_y - new_size / 2))
         self._hide_bubble()
+        self._reposition_open_panels()
 
     def _toggle_stay_on_top(self):
         """切换置顶状态"""
@@ -411,6 +523,10 @@ class EggplantPet(QWidget):
             apply_native_topmost(self.bubble, self.is_stay_on_top)
         if self.chat_input is not None and self.chat_input.isVisible():
             apply_native_topmost(self.chat_input, self.is_stay_on_top)
+        if self.bookmark_panel is not None and self.bookmark_panel.isVisible():
+            apply_native_topmost(self.bookmark_panel, self.is_stay_on_top)
+        if self.todo_panel is not None and self.todo_panel.isVisible():
+            apply_native_topmost(self.todo_panel, self.is_stay_on_top)
 
     # ============== 互动动画 ==============
     def _trigger_interaction(self):
