@@ -1,19 +1,17 @@
 # -*- coding: utf-8 -*-
 """应用内自动更新：版本比较与 GitHub Releases 选择。"""
 
-from __future__ import print_function
-
 import json
 import os
 import re
 import subprocess
 import sys
-import urllib.error
 import urllib.request
 
 GITHUB_OWNER = "1301604100"
 GITHUB_REPO = "eggplant"
 ASSET_NAMES = ("茄子桌宠.exe", "EggplantPet-Windows.exe")
+CREATE_NO_WINDOW = 0x08000000
 
 _VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
@@ -208,22 +206,30 @@ def build_update_bat_content(current_exe, new_exe, pid):
     lines = [
         "@echo off",
         "setlocal",
-        "set PID=%d" % int(pid),
-        "set NEW=%s" % new_exe,
-        "set CUR=%s" % current_exe,
+        'set "PID=%d"' % int(pid),
+        'set "NEW=%s"' % new_exe,
+        'set "CUR=%s"' % current_exe,
+        'set "LOG=%~dp0update-failed.log"',
         ":wait",
         "tasklist /FI \"PID eq %PID%\" | find \"%PID%\" >nul",
         "if not errorlevel 1 (",
-        "  timeout /t 1 /nobreak >nul",
+        "  ping -n 2 127.0.0.1 >nul",
         "  goto wait",
         ")",
-        "copy /Y \"%NEW%\" \"%CUR%\" >nul",
-        "if errorlevel 1 (",
-        "  echo Update failed. New file kept at:",
-        "  echo %NEW%",
-        "  pause",
-        "  exit /b 1",
-        ")",
+        "set RETRIES=15",
+        ":copy_retry",
+        "copy /Y \"%NEW%\" \"%CUR%\" >nul 2>&1",
+        "if not errorlevel 1 goto copy_ok",
+        "set /a RETRIES-=1",
+        "if %RETRIES% LEQ 0 goto copy_failed",
+        "ping -n 2 127.0.0.1 >nul",
+        "goto copy_retry",
+        ":copy_failed",
+        "> \"%LOG%\" echo Update failed after 15 copy attempts.",
+        ">> \"%LOG%\" echo New file: \"%NEW%\"",
+        ">> \"%LOG%\" echo Current file: \"%CUR%\"",
+        "exit /b 1",
+        ":copy_ok",
         "start \"\" \"%CUR%\"",
         "del \"%NEW%\" >nul 2>&1",
         "endlocal",
@@ -236,7 +242,8 @@ def write_update_script(current_exe, new_exe, pid, script_path):
     parent = os.path.dirname(script_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    with open(script_path, "w", encoding="utf-8") as f:
+    encoding = "oem" if sys.platform == "win32" else "utf-8"
+    with open(script_path, "w", encoding=encoding) as f:
         f.write(content)
     return script_path
 
@@ -244,7 +251,7 @@ def write_update_script(current_exe, new_exe, pid, script_path):
 def launch_update_and_exit(script_path, quit_callback):
     kwargs = {}
     if sys.platform == "win32":
-        kwargs["creationflags"] = 0x00000008
+        kwargs["creationflags"] = CREATE_NO_WINDOW
         kwargs["close_fds"] = True
     subprocess.Popen(["cmd.exe", "/c", script_path], **kwargs)
     if quit_callback:

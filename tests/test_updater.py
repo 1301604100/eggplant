@@ -79,6 +79,12 @@ class TestUpdater(unittest.TestCase):
         self.assertEqual(updater.read_local_version(resource_reader=lambda: (_ for _ in ()).throw(OSError())), "0.0.0")
         self.assertEqual(updater.read_local_version(resource_reader=lambda: "1.3.0\n"), "1.3.0")
 
+    def test_read_local_version_uses_bundled_version_by_default(self):
+        version = updater.read_local_version()
+
+        self.assertNotEqual(version, "0.0.0")
+        self.assertEqual(len(updater.parse_version(version)), 3)
+
     def test_pick_latest_release(self):
         picked = updater.pick_latest_release(SAMPLE_RELEASES)
         self.assertIsNotNone(picked)
@@ -197,6 +203,56 @@ class TestUpdaterNetwork(unittest.TestCase):
         self.assertIn("茄子桌宠.exe", content)
         self.assertIn("new.exe", content)
         self.assertIn("start", content.lower())
+
+    def test_build_update_bat_retries_copy_and_logs_failure(self):
+        content = updater.build_update_bat_content(
+            r"C:\Apps\茄子桌宠.exe",
+            r"C:\Temp\new.exe",
+            4242,
+        )
+
+        self.assertIn('set "NEW=C:\\Temp\\new.exe"', content)
+        self.assertIn('set "CUR=C:\\Apps\\茄子桌宠.exe"', content)
+        self.assertIn("ping -n 2 127.0.0.1 >nul", content)
+        self.assertIn("set RETRIES=15", content)
+        self.assertIn(":copy_retry", content)
+        self.assertIn("update-failed.log", content)
+        self.assertNotIn("pause", content.lower())
+        self.assertNotIn("timeout ", content.lower())
+
+    def test_write_update_script_uses_oem_encoding_for_chinese_windows_paths(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        script_path = str(Path(tmp.name) / "update.bat")
+
+        with mock.patch.object(updater.sys, "platform", "win32"), mock.patch(
+            "builtins.open",
+            mock.mock_open(),
+        ) as mocked_open:
+            updater.write_update_script(
+                r"C:\应用\茄子桌宠.exe",
+                r"C:\临时\新版.exe",
+                4242,
+                script_path,
+            )
+
+        mocked_open.assert_called_once_with(script_path, "w", encoding="oem")
+        written = mocked_open().write.call_args.args[0]
+        self.assertIn("茄子桌宠.exe", written)
+        self.assertIn("新版.exe", written)
+
+    def test_launch_update_uses_named_no_window_flag_on_windows(self):
+        with mock.patch.object(updater.sys, "platform", "win32"), mock.patch.object(
+            updater.subprocess,
+            "Popen",
+        ) as popen:
+            updater.launch_update_and_exit(r"C:\Temp\update.bat", None)
+
+        popen.assert_called_once_with(
+            ["cmd.exe", "/c", r"C:\Temp\update.bat"],
+            creationflags=updater.CREATE_NO_WINDOW,
+            close_fds=True,
+        )
 
 
 if __name__ == "__main__":

@@ -53,6 +53,17 @@ class TestUpdateUi(unittest.TestCase):
 
         self.assertEqual(pet.releases, [])
 
+    def test_hiding_regular_bubble_keeps_update_prompt_open(self):
+        pet = _BubbleOnlyPet()
+        bubble = pet.bubble
+
+        main.EggplantPet._hide_bubble(pet)
+
+        self.assertTrue(pet.bubble_timer.stopped)
+        self.assertTrue(bubble.closed)
+        self.assertIsNone(pet.bubble)
+        self.assertFalse(pet.update_prompt_hidden)
+
     def test_tray_shows_update_action_only_with_callback(self):
         parent = QWidget()
         called = []
@@ -253,6 +264,32 @@ class _FakePet(object):
 
     def _show_update_prompt(self, release):
         self.releases.append(release)
+
+
+class _BubbleOnlyPet(object):
+    def __init__(self):
+        self.bubble_timer = _FakeTimer()
+        self.bubble = _FakeBubble()
+        self.update_prompt_hidden = False
+
+    def _hide_update_prompt(self):
+        self.update_prompt_hidden = True
+
+
+class _FakeTimer(object):
+    def __init__(self):
+        self.stopped = False
+
+    def stop(self):
+        self.stopped = True
+
+
+class _FakeBubble(object):
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
 
 
 class _RecordingPet(main.EggplantPet):

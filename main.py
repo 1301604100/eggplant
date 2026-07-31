@@ -894,7 +894,6 @@ class EggplantPet(QWidget):
         if self.bubble:
             self.bubble.close()
             self.bubble = None
-        self._hide_update_prompt()
 
     def closeEvent(self, event):
         self._hide_bubble()
