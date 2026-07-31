@@ -37,6 +37,9 @@ jobs:
           --hidden-import bubble
           --hidden-import chat
           --hidden-import tray
+          --hidden-import storage
+          --hidden-import bookmarks
+          --hidden-import todos
           main.py
 
       - name: Prepare release assets
