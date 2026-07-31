@@ -177,6 +177,60 @@ class TestUpdateUi(unittest.TestCase):
         self.assertTrue(pet.download_result[1].endswith("update.bat"))
         self.assertFalse(pet._update_busy)
 
+    def test_confirm_starts_download_after_repeated_check_attempt(self):
+        pet = _RecordingPet()
+        self.addCleanup(pet.hide)
+        release = {
+            "version": "2.0.0",
+            "download_url": "https://example.com/update.exe",
+            "size": 123,
+        }
+        unblock_check = threading.Event()
+
+        def blocking_check():
+            unblock_check.wait(1)
+            return release
+
+        try:
+            with mock.patch.object(
+                main.updater,
+                "should_enable_updater",
+                return_value=True,
+            ), mock.patch.object(
+                main.updater,
+                "read_local_version",
+                return_value="1.0.0",
+            ), mock.patch.object(
+                main.updater,
+                "check_for_update",
+                side_effect=blocking_check,
+            ), mock.patch.object(
+                main.updater,
+                "download_update",
+            ), mock.patch.object(
+                main.updater,
+                "write_update_script",
+            ), mock.patch.object(
+                main.updater,
+                "launch_update_and_exit",
+            ), mock.patch.object(
+                main,
+                "apply_native_topmost",
+            ):
+                pet._on_update_check_done(release, None, manual=True)
+                prompt = pet._update_prompt
+                pet._check_for_updates(manual=True)
+                prompt._emit_confirm()
+                completed = self._process_events_until(
+                    pet.download_completed.is_set,
+                    timeout=0.5,
+                )
+
+            self.assertTrue(completed)
+            self.assertFalse(pet._update_busy)
+        finally:
+            unblock_check.set()
+
     def _process_events_until(self, predicate, timeout=1.0):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:

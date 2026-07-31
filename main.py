@@ -530,6 +530,8 @@ class EggplantPet(QWidget):
     def _check_for_updates(self, manual=False):
         if not updater.should_enable_updater():
             return
+        if self._update_prompt is not None:
+            return
         if self._update_busy:
             return
         if (not manual) and self._update_snoozed:
