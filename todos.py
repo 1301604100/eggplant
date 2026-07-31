@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """待办列表悬浮面板（Element UI 风格）。"""
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
     QLineEdit, QPushButton, QLabel, QCheckBox, QFrame,
@@ -55,7 +55,16 @@ class TodoPanel(QWidget):
         root.addLayout(header)
 
         self.list = QListWidget()
+        self.list.setObjectName("elTodoList")
         self.list.setMinimumHeight(160)
+        # setItemWidget 时 item 的 padding 会裁切行内控件，改由 row 自己留白
+        self.list.setStyleSheet("""
+            QListWidget#elTodoList::item {
+                padding: 0px;
+                margin: 2px 0;
+                border-radius: 4px;
+            }
+        """)
         root.addWidget(self.list)
 
         row = QHBoxLayout()
@@ -98,7 +107,7 @@ class TodoPanel(QWidget):
             row = QWidget()
             row.setStyleSheet("background: transparent;")
             lay = QHBoxLayout(row)
-            lay.setContentsMargins(6, 4, 6, 4)
+            lay.setContentsMargins(10, 8, 10, 8)
             lay.setSpacing(8)
 
             cb = QCheckBox()
@@ -110,16 +119,17 @@ class TodoPanel(QWidget):
 
             edit = QLineEdit(t.get("text") or "")
             edit.setFont(ui_font(11))
+            edit.setMinimumHeight(28)
             if t.get("done"):
                 edit.setStyleSheet(
                     "text-decoration: line-through; color: %s; border: none; "
-                    "background: transparent; padding: 4px 6px;"
+                    "background: transparent; padding: 2px 4px;"
                     % COLOR_TEXT_SECONDARY
                 )
             else:
                 edit.setStyleSheet(
                     "color: %s; border: none; background: transparent; "
-                    "padding: 4px 6px;"
+                    "padding: 2px 4px;"
                     % COLOR_TEXT
                 )
             edit.editingFinished.connect(
@@ -130,12 +140,15 @@ class TodoPanel(QWidget):
             del_btn.setObjectName("elTextDanger")
             del_btn.setCursor(Qt.PointingHandCursor)
             del_btn.setFont(ui_font(10))
+            del_btn.setFixedHeight(28)
             del_btn.clicked.connect(lambda _=False, i=todo_id: self._delete(i))
 
-            lay.addWidget(cb)
+            lay.addWidget(cb, 0, Qt.AlignVCenter)
             lay.addWidget(edit, 1)
-            lay.addWidget(del_btn)
-            item.setSizeHint(row.sizeHint())
+            lay.addWidget(del_btn, 0, Qt.AlignVCenter)
+            row.adjustSize()
+            hint = row.sizeHint()
+            item.setSizeHint(QSize(hint.width(), max(44, hint.height())))
             self.list.addItem(item)
             self.list.setItemWidget(item, row)
 
