@@ -268,6 +268,7 @@ class EggplantPet(QWidget):
             self._update_pixmap()
             self.move(int(center_x - new_size / 2), int(center_y - new_size / 2))
             self._hide_bubble()
+            self._reposition_open_panels()
 
     def contextMenuEvent(self, event):
         """右键菜单"""
