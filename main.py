@@ -179,6 +179,8 @@ class EggplantPet(QWidget):
                 "show_pet": self._show_pet,
                 "hide_pet": self._hide_pet,
                 "open_chat": self._open_chat,
+                "populate_bookmarks_menu": self._populate_bookmarks_menu,
+                "toggle_todo_panel": self._toggle_todo_panel,
                 "quit": self._quit_app,
             },
         )
