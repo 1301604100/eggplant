@@ -13,8 +13,8 @@ import webbrowser
 from ctypes import CFUNCTYPE, c_char_p, c_long, c_void_p, cdll, util
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QMenu, QAction
 from PyQt5.QtCore import (
-    Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QRect,
-    QSequentialAnimationGroup,
+    Qt, QObject, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QRect,
+    QSequentialAnimationGroup, pyqtSignal,
 )
 from PyQt5.QtGui import QPixmap, QIcon
 
@@ -123,6 +123,13 @@ DIALOGUES = [
 ]
 
 
+class _UpdateSignals(QObject):
+    """把 Python 工作线程的结果排队投递到 Qt 主线程。"""
+
+    check_finished = pyqtSignal(object, object, bool)
+    download_finished = pyqtSignal(object, object)
+
+
 class EggplantPet(QWidget):
     """茄子桌面宠物主窗口"""
 
@@ -197,6 +204,15 @@ class EggplantPet(QWidget):
         self._update_prompt = None
         self._update_snoozed = False
         self._update_busy = False
+        self._update_signals = _UpdateSignals(self)
+        self._update_signals.check_finished.connect(
+            self._on_update_check_done,
+            Qt.QueuedConnection,
+        )
+        self._update_signals.download_finished.connect(
+            self._on_download_done,
+            Qt.QueuedConnection,
+        )
         if updater.should_enable_updater():
             QTimer.singleShot(
                 3000,
@@ -519,6 +535,8 @@ class EggplantPet(QWidget):
         if (not manual) and self._update_snoozed:
             return
 
+        self._update_busy = True
+
         def worker():
             err = None
             result = None
@@ -527,14 +545,15 @@ class EggplantPet(QWidget):
             except Exception as exc:
                 err = exc
 
-            def done():
-                self._on_update_check_done(result, err, manual=manual)
+            self._update_signals.check_finished.emit(result, err, manual)
 
-            QTimer.singleShot(0, done)
-
-        threading.Thread(target=worker, daemon=True).start()
+        try:
+            threading.Thread(target=worker, daemon=True).start()
+        except Exception as exc:
+            self._on_update_check_done(None, exc, manual=manual)
 
     def _on_update_check_done(self, result, err, manual=False):
+        self._update_busy = False
         if err is not None:
             if manual:
                 self._show_bubble("检查失败，请稍后重试", duration_ms=3000)
@@ -625,12 +644,12 @@ class EggplantPet(QWidget):
             except Exception as exc:
                 err = exc
 
-            def done():
-                self._on_download_done(err, script)
+            self._update_signals.download_finished.emit(err, script)
 
-            QTimer.singleShot(0, done)
-
-        threading.Thread(target=worker, daemon=True).start()
+        try:
+            threading.Thread(target=worker, daemon=True).start()
+        except Exception as exc:
+            self._on_download_done(exc, None)
 
     def _on_download_done(self, err, script_path):
         self._update_busy = False
