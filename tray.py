@@ -6,7 +6,11 @@ from PyQt5.QtGui import QIcon
 
 
 class PetTray:
-    """桌宠系统托盘。callbacks: show_pet, hide_pet, open_chat, populate_bookmarks_menu, toggle_todo_panel, quit"""
+    """桌宠系统托盘。
+
+    callbacks: show_pet, hide_pet, open_chat, populate_bookmarks_menu,
+    toggle_todo_panel, check_for_updates, quit
+    """
 
     def __init__(self, parent, icon_path, callbacks):
         self.parent = parent
@@ -48,6 +52,13 @@ class PetTray:
         chat_action = QAction("聊聊天", parent)
         chat_action.triggered.connect(self._on_chat)
         menu.addAction(chat_action)
+
+        check_update_cb = self.callbacks.get("check_for_updates")
+        if check_update_cb:
+            menu.addSeparator()
+            update_action = QAction("检查更新", parent)
+            update_action.triggered.connect(check_update_cb)
+            menu.addAction(update_action)
 
         menu.addSeparator()
 

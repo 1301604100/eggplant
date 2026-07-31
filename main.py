@@ -7,21 +7,24 @@
 import sys
 import os
 import random
+import tempfile
+import threading
 import webbrowser
 from ctypes import CFUNCTYPE, c_char_p, c_long, c_void_p, cdll, util
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QMenu, QAction
 from PyQt5.QtCore import (
-    Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QRect,
-    QSequentialAnimationGroup,
+    Qt, QObject, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QRect,
+    QSequentialAnimationGroup, pyqtSignal,
 )
 from PyQt5.QtGui import QPixmap, QIcon
 
-from bubble import SpeechBubble, ChatInputBubble
+from bubble import SpeechBubble, ChatInputBubble, ConfirmBubble
 from chat import reply as chat_reply
 from tray import PetTray
 from bookmarks import BookmarkPanel
 from todos import TodoPanel
 import storage
+import updater
 
 
 # macOS: Qt 的 WindowStaysOnTopHint 约等于 level=8；此前误用 NSFloatingWindowLevel=3 反而更低
@@ -120,6 +123,13 @@ DIALOGUES = [
 ]
 
 
+class _UpdateSignals(QObject):
+    """把 Python 工作线程的结果排队投递到 Qt 主线程。"""
+
+    check_finished = pyqtSignal(object, object, bool)
+    download_finished = pyqtSignal(object, object)
+
+
 class EggplantPet(QWidget):
     """茄子桌面宠物主窗口"""
 
@@ -172,19 +182,42 @@ class EggplantPet(QWidget):
         self.original_geometry = None
 
         # 系统托盘
+        callbacks = {
+            "show_pet": self._show_pet,
+            "hide_pet": self._hide_pet,
+            "open_chat": self._open_chat,
+            "populate_bookmarks_menu": self._populate_bookmarks_menu,
+            "toggle_todo_panel": self._toggle_todo_panel,
+            "quit": self._quit_app,
+        }
+        if updater.should_enable_updater():
+            callbacks["check_for_updates"] = (
+                lambda: self._check_for_updates(manual=True)
+            )
         self.tray = PetTray(
             self,
             self._get_resource_path("eggplant.png"),
-            {
-                "show_pet": self._show_pet,
-                "hide_pet": self._hide_pet,
-                "open_chat": self._open_chat,
-                "populate_bookmarks_menu": self._populate_bookmarks_menu,
-                "toggle_todo_panel": self._toggle_todo_panel,
-                "quit": self._quit_app,
-            },
+            callbacks,
         )
         self.tray.show()
+
+        self._update_prompt = None
+        self._update_snoozed = False
+        self._update_busy = False
+        self._update_signals = _UpdateSignals(self)
+        self._update_signals.check_finished.connect(
+            self._on_update_check_done,
+            Qt.QueuedConnection,
+        )
+        self._update_signals.download_finished.connect(
+            self._on_download_done,
+            Qt.QueuedConnection,
+        )
+        if updater.should_enable_updater():
+            QTimer.singleShot(
+                3000,
+                lambda: self._check_for_updates(manual=False),
+            )
 
         # 初始位置（屏幕右下角）
         self._init_position()
@@ -321,6 +354,14 @@ class EggplantPet(QWidget):
         top_action.triggered.connect(self._toggle_stay_on_top)
         menu.addAction(top_action)
 
+        if updater.should_enable_updater():
+            menu.addSeparator()
+            update_action = QAction("检查更新", self)
+            update_action.triggered.connect(
+                lambda: self._check_for_updates(manual=True)
+            )
+            menu.addAction(update_action)
+
         menu.addSeparator()
 
         # 退出
@@ -333,6 +374,7 @@ class EggplantPet(QWidget):
     def _quit_app(self):
         """彻底退出（macOS 上 Tool 窗口 close 不会结束进程，图标会留在程序坞）"""
         self._hide_bubble()
+        self._hide_update_prompt()
         self._hide_chat_input()
         self._hide_panels()
         if self.tray:
@@ -343,6 +385,7 @@ class EggplantPet(QWidget):
 
     def _hide_pet(self):
         self._hide_bubble()
+        self._hide_update_prompt()
         self._hide_chat_input()
         self._hide_panels()
         self.hide()
@@ -482,6 +525,141 @@ class EggplantPet(QWidget):
         answer = chat_reply(text)
         if answer:
             self._show_bubble(answer, duration_ms=3500)
+
+    # ============== 自动更新 ==============
+    def _check_for_updates(self, manual=False):
+        if not updater.should_enable_updater():
+            return
+        if self._update_prompt is not None:
+            return
+        if self._update_busy:
+            return
+        if (not manual) and self._update_snoozed:
+            return
+
+        self._update_busy = True
+
+        def worker():
+            err = None
+            result = None
+            try:
+                result = updater.check_for_update()
+            except Exception as exc:
+                err = exc
+
+            self._update_signals.check_finished.emit(result, err, manual)
+
+        try:
+            threading.Thread(target=worker, daemon=True).start()
+        except Exception as exc:
+            self._on_update_check_done(None, exc, manual=manual)
+
+    def _on_update_check_done(self, result, err, manual=False):
+        self._update_busy = False
+        if err is not None:
+            if manual:
+                self._show_bubble("检查失败，请稍后重试", duration_ms=3000)
+            return
+        if result is None:
+            if manual:
+                local = updater.read_local_version()
+                self._show_bubble(
+                    "已是最新版本 %s" % local,
+                    duration_ms=3000,
+                )
+            return
+        if (not manual) and self._update_snoozed:
+            return
+        self._show_update_prompt(result)
+
+    def _show_update_prompt(self, release):
+        self._hide_bubble()
+        self._hide_update_prompt()
+        local = updater.read_local_version()
+        text = "发现新版本 %s（当前 %s），要更新吗？" % (
+            release["version"],
+            local,
+        )
+        self._update_prompt = ConfirmBubble(
+            text,
+            confirm_text="更新",
+            cancel_text="稍后",
+            on_confirm=lambda: self._start_download_update(release),
+            on_cancel=self._snooze_update_prompt,
+        )
+        prompt = self._update_prompt
+        prompt.adjustSize()
+        bubble_x = self.x() + self.width() // 2 - prompt.width() // 2
+        bubble_y = self.y() - prompt.height() - 5
+        screen = QApplication.primaryScreen().availableGeometry()
+        if bubble_x < 10:
+            bubble_x = 10
+        if bubble_x + prompt.width() > screen.width() - 10:
+            bubble_x = screen.width() - prompt.width() - 10
+        if bubble_y < 10:
+            bubble_y = self.y() + self.height() + 5
+        prompt.move(bubble_x, bubble_y)
+        prompt.show()
+        apply_native_topmost(prompt, self.is_stay_on_top)
+
+    def _hide_update_prompt(self):
+        if self._update_prompt:
+            self._update_prompt.close()
+            self._update_prompt = None
+
+    def _snooze_update_prompt(self):
+        self._update_snoozed = True
+        self._hide_update_prompt()
+
+    def _start_download_update(self, release):
+        if self._update_busy:
+            return
+        self._update_busy = True
+        self._hide_update_prompt()
+        self._show_bubble("正在下载…", duration_ms=60000)
+
+        def worker():
+            err = None
+            script = None
+            try:
+                tmpdir = os.path.join(
+                    tempfile.gettempdir(),
+                    "eggplant_pet_update",
+                )
+                os.makedirs(tmpdir, exist_ok=True)
+                dest = os.path.join(
+                    tmpdir,
+                    "EggplantPet-Windows-%s.exe" % release["version"],
+                )
+                updater.download_update(
+                    release["download_url"],
+                    dest,
+                    expected_size=release.get("size"),
+                )
+                script = os.path.join(tmpdir, "update.bat")
+                updater.write_update_script(
+                    sys.executable,
+                    dest,
+                    os.getpid(),
+                    script,
+                )
+            except Exception as exc:
+                err = exc
+
+            self._update_signals.download_finished.emit(err, script)
+
+        try:
+            threading.Thread(target=worker, daemon=True).start()
+        except Exception as exc:
+            self._on_download_done(exc, None)
+
+    def _on_download_done(self, err, script_path):
+        self._update_busy = False
+        if err is not None:
+            self._show_bubble("下载失败", duration_ms=3000)
+            return
+        self._show_bubble("正在更新，即将重启…", duration_ms=2000)
+        updater.launch_update_and_exit(script_path, self._quit_app)
 
     # ============== 大小调整 ==============
     def _set_scale(self, scale):
@@ -719,6 +897,7 @@ class EggplantPet(QWidget):
 
     def closeEvent(self, event):
         self._hide_bubble()
+        self._hide_update_prompt()
         self._hide_chat_input()
         self._hide_panels()
         if self.tray:

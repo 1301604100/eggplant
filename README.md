@@ -40,13 +40,15 @@
 
 ### 方式二：GitHub Releases 下载（推荐，无需本机 Windows / Python）
 
-打包成功后会自动发布到 Releases，长期可下载：
+打包成功后会按根目录 `VERSION` 自动发布到 Releases（如 `v1.0.0`），长期可下载：
 
 1. 打开 [Releases 页面](https://github.com/1301604100/eggplant/releases)
-2. 进入 **茄子桌宠 Windows**（tag: `latest`）
+2. 进入对应版本（tag: `v{VERSION}`，例如 `v1.0.0`）
 3. 下载 `茄子桌宠.exe` 或 `EggplantPet-Windows.exe`，双击运行
 
-推送到 `main` 或在 Actions 里手动 **Run workflow** 都会重新打包并覆盖 `latest` 发布。
+Windows 安装版会在启动约 3 秒后静默检查更新；有新版本时会弹出确认气泡，确认后自动下载并替换 EXE 后重启。也可在右键/托盘菜单选择「检查更新」手动检查；选择「稍后」则本会话不再自动弹出，但菜单仍可再次检查。
+
+发新版：修改根目录 `VERSION` → 推送 `main`（或在 Actions 里手动 **Run workflow**）。同一 `VERSION` 重复推送会覆盖同 tag 资产。
 
 > 💡 打包后的 EXE 是单文件，内置 Python 运行时，目标电脑无需安装 Python  
 > Artifacts 仍会保留一份临时产物，但请优先用 Releases 链接分享
@@ -132,7 +134,7 @@ A: 右键点击角色，选择"退出"。
 A: 确保已安装 Python 和 pip，尝试手动执行：
    ```
    pip install PyQt5 pyinstaller
-   pyinstaller --onefile --windowed --name "茄子桌宠" --icon=eggplant.ico --add-data "eggplant.png;." --hidden-import bubble --hidden-import chat --hidden-import tray --hidden-import storage --hidden-import bookmarks --hidden-import todos --hidden-import ui_theme main.py
+   pyinstaller --onefile --windowed --name "茄子桌宠" --icon=eggplant.ico --add-data "eggplant.png;." --add-data "eggplant.ico;." --add-data "VERSION;." --hidden-import bubble --hidden-import chat --hidden-import tray --hidden-import storage --hidden-import bookmarks --hidden-import todos --hidden-import ui_theme --hidden-import updater main.py
    ```
 
 ---
