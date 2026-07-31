@@ -15,6 +15,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Read VERSION
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Get-Content -Raw VERSION).Trim()
+          if (-not $v) { throw "VERSION is empty" }
+          echo "value=$v" >> $env:GITHUB_OUTPUT
+          echo "tag=v$v" >> $env:GITHUB_OUTPUT
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -34,6 +43,7 @@ jobs:
           --icon=eggplant.ico
           --add-data "eggplant.png;."
           --add-data "eggplant.ico;."
+          --add-data "VERSION;."
           --hidden-import bubble
           --hidden-import chat
           --hidden-import tray
@@ -41,6 +51,7 @@ jobs:
           --hidden-import bookmarks
           --hidden-import todos
           --hidden-import ui_theme
+          --hidden-import updater
           main.py
 
       - name: Prepare release assets
@@ -61,14 +72,15 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: 茄子桌宠 Windows
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: 茄子桌宠 ${{ steps.version.outputs.tag }}
           body: |
             ## 下载说明
             下载下方附件即可运行（无需安装 Python）：
             - `茄子桌宠.exe`（中文文件名）
             - `EggplantPet-Windows.exe`（英文文件名，部分环境下载更稳）
 
+            - Version: `${{ steps.version.outputs.value }}`
             - Commit: `${{ github.sha }}`
             - Workflow run: #${{ github.run_number }}
           files: |
