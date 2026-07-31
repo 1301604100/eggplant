@@ -132,7 +132,7 @@ A: 右键点击角色，选择"退出"。
 A: 确保已安装 Python 和 pip，尝试手动执行：
    ```
    pip install PyQt5 pyinstaller
-   pyinstaller --onefile --windowed --name "茄子桌宠" --icon=eggplant.ico --add-data "eggplant.png;." --hidden-import bubble --hidden-import chat --hidden-import tray --hidden-import storage --hidden-import bookmarks --hidden-import todos main.py
+   pyinstaller --onefile --windowed --name "茄子桌宠" --icon=eggplant.ico --add-data "eggplant.png;." --hidden-import bubble --hidden-import chat --hidden-import tray --hidden-import storage --hidden-import bookmarks --hidden-import todos --hidden-import ui_theme main.py
    ```
 
 ---

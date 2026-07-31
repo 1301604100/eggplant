@@ -1,14 +1,20 @@
 # -*- coding: utf-8 -*-
-"""待办列表悬浮面板。"""
+"""待办列表悬浮面板（Element UI 风格）。"""
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
-    QLineEdit, QPushButton, QLabel, QCheckBox,
+    QLineEdit, QPushButton, QLabel, QCheckBox, QFrame,
 )
 
 import storage
+from ui_theme import (
+    apply_card_shadow,
+    panel_stylesheet,
+    ui_font,
+    COLOR_TEXT_SECONDARY,
+    COLOR_TEXT,
+)
 
 
 class TodoPanel(QWidget):
@@ -17,17 +23,31 @@ class TodoPanel(QWidget):
         self.on_close = on_close
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setMinimumWidth(300)
-        self.setMinimumHeight(260)
+        self.setMinimumWidth(340)
+        self.setMinimumHeight(300)
+        self.setStyleSheet(panel_stylesheet())
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(8)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 12)
+        outer.setSpacing(0)
+
+        card = QFrame(self)
+        card.setObjectName("elCard")
+        apply_card_shadow(card)
+        outer.addWidget(card)
+
+        root = QVBoxLayout(card)
+        root.setContentsMargins(16, 14, 16, 16)
+        root.setSpacing(12)
 
         header = QHBoxLayout()
         title = QLabel("待办")
-        title.setFont(QFont("Microsoft YaHei", 12, QFont.Bold))
-        close_btn = QPushButton("关闭")
+        title.setObjectName("elTitle")
+        title.setFont(ui_font(13, bold=True))
+        close_btn = QPushButton("×")
+        close_btn.setObjectName("elText")
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.setToolTip("关闭")
         close_btn.clicked.connect(self._close)
         header.addWidget(title)
         header.addStretch()
@@ -35,47 +55,39 @@ class TodoPanel(QWidget):
         root.addLayout(header)
 
         self.list = QListWidget()
+        self.list.setMinimumHeight(160)
         root.addWidget(self.list)
 
         row = QHBoxLayout()
+        row.setSpacing(8)
         self.input = QLineEdit()
-        self.input.setPlaceholderText("新待办…")
+        self.input.setPlaceholderText("输入待办内容，回车添加")
+        self.input.setFont(ui_font(11))
         self.input.returnPressed.connect(self._on_add)
         add_btn = QPushButton("添加")
+        add_btn.setObjectName("elPrimary")
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.setFont(ui_font(11))
         add_btn.clicked.connect(self._on_add)
-        row.addWidget(self.input)
+        row.addWidget(self.input, 1)
         row.addWidget(add_btn)
         root.addLayout(row)
 
+        footer = QHBoxLayout()
         clear_btn = QPushButton("清空已完成")
+        clear_btn.setObjectName("elDefault")
+        clear_btn.setCursor(Qt.PointingHandCursor)
+        clear_btn.setFont(ui_font(11))
         clear_btn.clicked.connect(self._on_clear)
-        root.addWidget(clear_btn)
+        footer.addWidget(clear_btn)
+        footer.addStretch()
+        root.addLayout(footer)
 
         self.hint = QLabel("")
-        self.hint.setStyleSheet("color: #b91c1c; font-size: 11px;")
+        self.hint.setObjectName("elHint")
+        self.hint.setFont(ui_font(10))
         root.addWidget(self.hint)
 
-        self.setStyleSheet("""
-            QWidget {
-                background: rgba(255, 255, 255, 235);
-                border-radius: 14px;
-                color: #333;
-            }
-            QLineEdit, QListWidget {
-                background: rgba(255, 255, 255, 230);
-                border: 1px solid #ddd;
-                border-radius: 8px;
-                padding: 4px 8px;
-            }
-            QPushButton {
-                background: #7c3aed;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 6px 12px;
-            }
-            QPushButton:hover { background: #6d28d9; }
-        """)
         self.reload()
 
     def reload(self):
@@ -84,23 +96,42 @@ class TodoPanel(QWidget):
             item = QListWidgetItem()
             item.setData(Qt.UserRole, t["id"])
             row = QWidget()
+            row.setStyleSheet("background: transparent;")
             lay = QHBoxLayout(row)
-            lay.setContentsMargins(4, 2, 4, 2)
+            lay.setContentsMargins(6, 4, 6, 4)
+            lay.setSpacing(8)
+
             cb = QCheckBox()
             cb.setChecked(bool(t.get("done")))
             todo_id = t["id"]
             cb.stateChanged.connect(
                 lambda state, i=todo_id: self._toggle(i, state == Qt.Checked)
             )
+
             edit = QLineEdit(t.get("text") or "")
+            edit.setFont(ui_font(11))
             if t.get("done"):
-                edit.setStyleSheet("text-decoration: line-through; color: #888;")
+                edit.setStyleSheet(
+                    "text-decoration: line-through; color: %s; border: none; "
+                    "background: transparent; padding: 4px 6px;"
+                    % COLOR_TEXT_SECONDARY
+                )
+            else:
+                edit.setStyleSheet(
+                    "color: %s; border: none; background: transparent; "
+                    "padding: 4px 6px;"
+                    % COLOR_TEXT
+                )
             edit.editingFinished.connect(
                 lambda e=edit, i=todo_id: self._edit(i, e.text())
             )
-            del_btn = QPushButton("删")
-            del_btn.setFixedWidth(36)
+
+            del_btn = QPushButton("删除")
+            del_btn.setObjectName("elTextDanger")
+            del_btn.setCursor(Qt.PointingHandCursor)
+            del_btn.setFont(ui_font(10))
             del_btn.clicked.connect(lambda _=False, i=todo_id: self._delete(i))
+
             lay.addWidget(cb)
             lay.addWidget(edit, 1)
             lay.addWidget(del_btn)
