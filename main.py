@@ -37,7 +37,24 @@ _HWND_TOPMOST = -1
 _HWND_NOTOPMOST = -2
 _SWP_NOMOVE = 0x0002
 _SWP_NOSIZE = 0x0001
+_SWP_NOZORDER = 0x0004
 _SWP_SHOWWINDOW = 0x0040
+_SWP_NOACTIVATE = 0x0010
+_SWP_FRAMECHANGED = 0x0020
+# 置顶时不要 SHOWWINDOW，否则 Windows 任务栏/Alt+Tab 容易刷出多个条目
+_WINDOWS_TOPMOST_FLAGS = _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOACTIVATE
+_WINDOWS_FRAME_FLAGS = (
+    _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE | _SWP_FRAMECHANGED
+)
+_GWL_EXSTYLE = -20
+_GWLP_HWNDPARENT = -8
+_WS_EX_TOOLWINDOW = 0x00000080
+_WS_EX_APPWINDOW = 0x00040000
+
+
+def _windows_tool_exstyle(exstyle):
+    """确保为工具窗：有 TOOLWINDOW、无 APPWINDOW（避免进任务栏/Alt+Tab）。"""
+    return (int(exstyle) & ~_WS_EX_APPWINDOW) | _WS_EX_TOOLWINDOW
 
 
 def apply_native_topmost(widget, enabled):
@@ -83,13 +100,50 @@ def _macos_set_window_level(widget, enabled):
         msg_set_long(ns_window, sel_registerName(b"setLevel:"), _MAC_NORMAL_LEVEL)
 
 
+def _windows_user32():
+    return cdll.LoadLibrary("user32")
+
+
+def _windows_set_exstyle_toolwindow(hwnd):
+    user32 = _windows_user32()
+    exstyle = user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
+    user32.SetWindowLongW(hwnd, _GWL_EXSTYLE, _windows_tool_exstyle(exstyle))
+
+
+def _windows_set_owner(child_hwnd, owner_hwnd):
+    """设置 owner（不是 SetParent），owned 窗不单独出现在任务栏。"""
+    user32 = _windows_user32()
+    if hasattr(user32, "SetWindowLongPtrW"):
+        user32.SetWindowLongPtrW(child_hwnd, _GWLP_HWNDPARENT, owner_hwnd)
+    else:
+        user32.SetWindowLongW(child_hwnd, _GWLP_HWNDPARENT, owner_hwnd)
+
+
+def _windows_configure_tool_window(widget, owner=None):
+    """Windows：强制工具窗样式，并可选挂到主窗 owner 下。"""
+    if widget is None or sys.platform != "win32":
+        return
+    try:
+        user32 = _windows_user32()
+        hwnd = int(widget.winId())
+        _windows_set_exstyle_toolwindow(hwnd)
+        if owner is not None:
+            owner_hwnd = int(owner.winId())
+            if owner_hwnd and owner_hwnd != hwnd:
+                _windows_set_owner(hwnd, owner_hwnd)
+        # 让 EXSTYLE 立即生效（不改 Z 序、不激活）
+        user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, _WINDOWS_FRAME_FLAGS)
+    except Exception:
+        pass
+
+
 def _windows_set_topmost(widget, enabled):
-    user32 = cdll.LoadLibrary("user32")
+    user32 = _windows_user32()
     hwnd = int(widget.winId())
     insert_after = _HWND_TOPMOST if enabled else _HWND_NOTOPMOST
     user32.SetWindowPos(
         hwnd, insert_after, 0, 0, 0, 0,
-        _SWP_NOMOVE | _SWP_NOSIZE | _SWP_SHOWWINDOW,
+        _WINDOWS_TOPMOST_FLAGS,
     )
 
 
@@ -264,12 +318,11 @@ class EggplantPet(QWidget):
             # 判断是否为拖动（移动超过一定距离才算拖动）
             if self.press_pos:
                 delta = (event.globalPos() - self.press_pos).manhattanLength()
-                if delta > 5:
+                if delta > 5 and not self.is_dragging:
                     self.is_dragging = True
+                    self._hide_bubble()
             if self.is_dragging and not self.is_animating:
                 self.move(event.globalPos() - self.drag_position)
-                # 移动时隐藏气泡
-                self._hide_bubble()
                 self._reposition_open_panels()
 
     def mouseReleaseEvent(self, event):
@@ -395,6 +448,18 @@ class EggplantPet(QWidget):
         self.raise_()
         self._refresh_native_topmost()
 
+    def _present_floating(self, widget, focus=False):
+        """显示悬浮窗：Windows 下挂 owner + 工具窗样式，避免任务栏/Alt+Tab 多条目。"""
+        if widget is None:
+            return
+        widget.show()
+        widget.raise_()
+        if sys.platform == "win32":
+            _windows_configure_tool_window(widget, owner=self)
+        apply_native_topmost(widget, self.is_stay_on_top)
+        if focus and hasattr(widget, "focus_input"):
+            widget.focus_input()
+
     def _open_chat(self):
         """打开聊天输入气泡"""
         self._show_pet()
@@ -403,10 +468,7 @@ class EggplantPet(QWidget):
         if self.chat_input is None:
             self.chat_input = ChatInputBubble(on_send=self._on_chat_send)
         self._position_chat_input()
-        self.chat_input.show()
-        self.chat_input.raise_()
-        apply_native_topmost(self.chat_input, self.is_stay_on_top)
-        self.chat_input.focus_input()
+        self._present_floating(self.chat_input, focus=True)
 
     def _hide_chat_input(self):
         if self.chat_input is not None:
@@ -487,9 +549,7 @@ class EggplantPet(QWidget):
             self.bookmark_panel = BookmarkPanel()
         self.bookmark_panel.reload()
         self._position_panel(self.bookmark_panel)
-        self.bookmark_panel.show()
-        self.bookmark_panel.raise_()
-        apply_native_topmost(self.bookmark_panel, self.is_stay_on_top)
+        self._present_floating(self.bookmark_panel)
 
     def _toggle_todo_panel(self):
         self._show_pet()
@@ -501,9 +561,7 @@ class EggplantPet(QWidget):
             self.todo_panel = TodoPanel()
         self.todo_panel.reload()
         self._position_panel(self.todo_panel)
-        self.todo_panel.show()
-        self.todo_panel.raise_()
-        apply_native_topmost(self.todo_panel, self.is_stay_on_top)
+        self._present_floating(self.todo_panel)
 
     def _position_chat_input(self):
         if self.chat_input is None:
@@ -599,8 +657,7 @@ class EggplantPet(QWidget):
         if bubble_y < 10:
             bubble_y = self.y() + self.height() + 5
         prompt.move(bubble_x, bubble_y)
-        prompt.show()
-        apply_native_topmost(prompt, self.is_stay_on_top)
+        self._present_floating(prompt)
 
     def _hide_update_prompt(self):
         if self._update_prompt:
@@ -699,15 +756,27 @@ class EggplantPet(QWidget):
         QTimer.singleShot(100, self._refresh_native_topmost)
 
     def _refresh_native_topmost(self):
+        if sys.platform == "win32":
+            _windows_configure_tool_window(self, owner=None)
         apply_native_topmost(self, self.is_stay_on_top)
-        if self.bubble is not None:
-            apply_native_topmost(self.bubble, self.is_stay_on_top)
-        if self.chat_input is not None and self.chat_input.isVisible():
-            apply_native_topmost(self.chat_input, self.is_stay_on_top)
-        if self.bookmark_panel is not None and self.bookmark_panel.isVisible():
-            apply_native_topmost(self.bookmark_panel, self.is_stay_on_top)
-        if self.todo_panel is not None and self.todo_panel.isVisible():
-            apply_native_topmost(self.todo_panel, self.is_stay_on_top)
+        for floating in (
+            self.bubble,
+            self._update_prompt,
+            self.chat_input,
+            self.bookmark_panel,
+            self.todo_panel,
+        ):
+            if floating is None:
+                continue
+            if floating is self.bubble or floating is self._update_prompt:
+                visible = True
+            else:
+                visible = floating.isVisible()
+            if not visible:
+                continue
+            if sys.platform == "win32":
+                _windows_configure_tool_window(floating, owner=self)
+            apply_native_topmost(floating, self.is_stay_on_top)
 
     # ============== 互动动画 ==============
     def _trigger_interaction(self):
@@ -883,8 +952,7 @@ class EggplantPet(QWidget):
             bubble_y = self.y() + self.height() + 5
 
         self.bubble.move(bubble_x, bubble_y)
-        self.bubble.show()
-        apply_native_topmost(self.bubble, self.is_stay_on_top)
+        self._present_floating(self.bubble)
 
         self.bubble_timer.start(duration_ms)
 
