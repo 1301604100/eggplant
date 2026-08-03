@@ -169,8 +169,10 @@ class ConfirmBubble(QWidget):
 
         self.label = QLabel(text)
         self.label.setWordWrap(True)
+        self.label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.label.setFont(QFont("Microsoft YaHei", 11))
         self.label.setStyleSheet("color: #333; background: transparent;")
+        self.label.setMaximumWidth(320)
 
         self.confirm_btn = QPushButton(confirm_text)
         self.confirm_btn.setObjectName("confirmBtn")
@@ -194,7 +196,8 @@ class ConfirmBubble(QWidget):
         layout.addWidget(self.label)
         layout.addLayout(row)
 
-        self.setMinimumWidth(260)
+        self.setMinimumWidth(280)
+        self.setMaximumWidth(360)
         self.setStyleSheet("""
             QWidget {
                 background: rgba(255, 255, 255, 235);

@@ -9,6 +9,7 @@ import os
 import random
 import tempfile
 import threading
+import traceback
 import webbrowser
 from ctypes import CFUNCTYPE, c_char_p, c_long, c_void_p, cdll, util
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QMenu, QAction
@@ -242,12 +243,9 @@ class EggplantPet(QWidget):
             "open_chat": self._open_chat,
             "populate_bookmarks_menu": self._populate_bookmarks_menu,
             "toggle_todo_panel": self._toggle_todo_panel,
+            "check_for_updates": lambda: self._check_for_updates(manual=True),
             "quit": self._quit_app,
         }
-        if updater.should_enable_updater():
-            callbacks["check_for_updates"] = (
-                lambda: self._check_for_updates(manual=True)
-            )
         self.tray = PetTray(
             self,
             self._get_resource_path("eggplant.png"),
@@ -407,13 +405,10 @@ class EggplantPet(QWidget):
         top_action.triggered.connect(self._toggle_stay_on_top)
         menu.addAction(top_action)
 
-        if updater.should_enable_updater():
-            menu.addSeparator()
-            update_action = QAction("检查更新", self)
-            update_action.triggered.connect(
-                lambda: self._check_for_updates(manual=True)
-            )
-            menu.addAction(update_action)
+        menu.addSeparator()
+        update_action = QAction("检查更新", self)
+        update_action.triggered.connect(lambda: self._check_for_updates(manual=True))
+        menu.addAction(update_action)
 
         menu.addSeparator()
 
@@ -585,8 +580,18 @@ class EggplantPet(QWidget):
             self._show_bubble(answer, duration_ms=3500)
 
     # ============== 自动更新 ==============
+    def _open_releases_page(self):
+        url = updater.releases_page_url()
+        try:
+            ok = webbrowser.open(url)
+            if not ok:
+                self._show_bubble("打不开更新页面", duration_ms=2500)
+        except Exception:
+            self._show_bubble("打不开更新页面", duration_ms=2500)
+
     def _check_for_updates(self, manual=False):
-        if not updater.should_enable_updater():
+        # 启动静默检查仅 Windows 打包版；菜单「检查更新」各平台都查，先弹更新说明
+        if (not manual) and not updater.should_enable_updater():
             return
         if self._update_prompt is not None:
             return
@@ -596,25 +601,40 @@ class EggplantPet(QWidget):
             return
 
         self._update_busy = True
+        if manual:
+            self._show_bubble("正在检查更新…", duration_ms=15000)
 
         def worker():
             err = None
             result = None
             try:
+                print(
+                    "updater: checking updates, local=%s enable_in_app=%s"
+                    % (
+                        updater.read_local_version(),
+                        updater.should_enable_updater(),
+                    )
+                )
                 result = updater.check_for_update()
+                print("updater: check result=%r" % (result,))
             except Exception as exc:
                 err = exc
+                print("updater: check failed:", repr(exc))
+                traceback.print_exc()
 
             self._update_signals.check_finished.emit(result, err, manual)
 
         try:
             threading.Thread(target=worker, daemon=True).start()
         except Exception as exc:
+            print("updater: start check thread failed:", repr(exc))
+            traceback.print_exc()
             self._on_update_check_done(None, exc, manual=manual)
 
     def _on_update_check_done(self, result, err, manual=False):
         self._update_busy = False
         if err is not None:
+            print("updater: on_check_done error:", repr(err))
             if manual:
                 self._show_bubble("检查失败，请稍后重试", duration_ms=3000)
             return
@@ -634,15 +654,18 @@ class EggplantPet(QWidget):
         self._hide_bubble()
         self._hide_update_prompt()
         local = updater.read_local_version()
-        text = "发现新版本 %s（当前 %s），要更新吗？" % (
-            release["version"],
-            local,
-        )
+        text = updater.format_update_prompt_text(local, release)
+        if updater.should_enable_updater():
+            confirm_text = "更新"
+            on_confirm = lambda: self._start_download_update(release)
+        else:
+            confirm_text = "打开下载页"
+            on_confirm = self._open_releases_page
         self._update_prompt = ConfirmBubble(
             text,
-            confirm_text="更新",
+            confirm_text=confirm_text,
             cancel_text="稍后",
-            on_confirm=lambda: self._start_download_update(release),
+            on_confirm=on_confirm,
             on_cancel=self._snooze_update_prompt,
         )
         prompt = self._update_prompt

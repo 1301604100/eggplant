@@ -101,6 +101,63 @@ class TestUpdateUi(unittest.TestCase):
         ]
         self.assertNotIn("检查更新", action_texts)
 
+    def test_non_windows_prompt_opens_releases_page_on_confirm(self):
+        pet = _FakePet()
+        opened = []
+        pet._open_releases_page = lambda: opened.append("releases")
+        pet._hide_bubble = lambda: None
+        pet._hide_update_prompt = lambda: None
+        pet._snooze_update_prompt = lambda: None
+        pet._present_floating = lambda prompt: None
+        pet.x = lambda: 100
+        pet.y = lambda: 100
+        pet.width = lambda: 150
+        pet.height = lambda: 150
+
+        with mock.patch.object(
+            main.updater,
+            "should_enable_updater",
+            return_value=False,
+        ), mock.patch.object(
+            main.updater,
+            "read_local_version",
+            return_value="1.0.0",
+        ), mock.patch.object(
+            main,
+            "ConfirmBubble",
+            side_effect=lambda *args, **kwargs: _CaptureConfirm(*args, **kwargs),
+        ), mock.patch.object(
+            main.QApplication,
+            "primaryScreen",
+            return_value=_FakeScreen(),
+        ):
+            main.EggplantPet._show_update_prompt(
+                pet,
+                {"version": "1.2.0", "body": "修复 mac 菜单"},
+            )
+            prompt = pet._update_prompt
+            self.assertEqual(prompt.confirm_text, "打开下载页")
+            self.assertIn("修复 mac 菜单", prompt.text)
+            prompt.on_confirm()
+
+        self.assertEqual(opened, ["releases"])
+
+    def test_open_releases_page_uses_github_releases_url(self):
+        pet = _FakePet()
+        opened = []
+
+        with mock.patch.object(
+            main.webbrowser,
+            "open",
+            side_effect=lambda url: opened.append(url) or True,
+        ):
+            main.EggplantPet._open_releases_page(pet)
+
+        self.assertEqual(
+            opened,
+            ["https://github.com/1301604100/eggplant/releases"],
+        )
+
     def test_check_worker_completion_reaches_main_thread_handler(self):
         pet = _RecordingPet()
         self.addCleanup(pet.hide)
@@ -256,6 +313,8 @@ class TestUpdateUi(unittest.TestCase):
 class _FakePet(object):
     def __init__(self):
         self._update_snoozed = False
+        self._update_busy = False
+        self._update_prompt = None
         self.messages = []
         self.releases = []
 
@@ -264,6 +323,34 @@ class _FakePet(object):
 
     def _show_update_prompt(self, release):
         self.releases.append(release)
+
+
+class _CaptureConfirm(object):
+    def __init__(self, text, confirm_text="更新", cancel_text="稍后",
+                 on_confirm=None, on_cancel=None, parent=None):
+        self.text = text
+        self.confirm_text = confirm_text
+        self.cancel_text = cancel_text
+        self.on_confirm = on_confirm
+        self.on_cancel = on_cancel
+
+    def adjustSize(self):
+        return None
+
+    def width(self):
+        return 280
+
+    def height(self):
+        return 160
+
+    def move(self, x, y):
+        return None
+
+
+class _FakeScreen(object):
+    def availableGeometry(self):
+        from PyQt5.QtCore import QRect
+        return QRect(0, 0, 1920, 1080)
 
 
 class _BubbleOnlyPet(object):

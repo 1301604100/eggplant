@@ -2,6 +2,13 @@
 
 一个可爱的茄子毛绒玩具风格的 Windows 桌面宠物程序。
 
+## ⚖️ 许可与使用限制
+
+本项目为**专有软件**，详见根目录 [`LICENSE`](LICENSE)。
+
+- **允许**：通过 [GitHub Releases](https://github.com/1301604100/eggplant/releases) 下载官方构建，供个人非商业运行。
+- **禁止**：未经书面许可，使用、复制、修改、分发本仓库**源代码**，或基于源码二次开发/再发布。
+
 ## ✨ 功能特性
 
 - 🖼️ **透明窗口**：无边框、背景透明，角色浮在桌面上
@@ -26,19 +33,7 @@
 
 ## 🚀 快速开始
 
-### 方式一：直接运行 Python 源码
-
-1. 安装 Python 3.8+（官网下载：https://www.python.org/downloads/）
-2. 安装依赖：
-   ```bash
-   pip install PyQt5
-   ```
-3. 运行程序：
-   ```bash
-   python main.py
-   ```
-
-### 方式二：GitHub Releases 下载（推荐，无需本机 Windows / Python）
+### 方式一：GitHub Releases 下载（推荐，无需本机 Windows / Python）
 
 打包成功后会按根目录 `VERSION` 自动发布到 Releases（如 `v1.0.0`），长期可下载：
 
@@ -46,18 +41,14 @@
 2. 进入对应版本（tag: `v{VERSION}`，例如 `v1.0.0`）
 3. 下载 `茄子桌宠.exe` 或 `EggplantPet-Windows.exe`，双击运行
 
-Windows 安装版会在启动约 3 秒后静默检查更新；有新版本时会弹出确认气泡，确认后自动下载并替换 EXE 后重启。也可在右键/托盘菜单选择「检查更新」手动检查；选择「稍后」则本会话不再自动弹出，但菜单仍可再次检查。
+右键/托盘菜单均有「检查更新」：先查询最新 Release 并弹出更新说明。Windows 安装版确认后自动下载替换 EXE；macOS / 源码运行确认后打开 GitHub Releases 页面。Windows 安装版还会在启动约 3 秒后静默检查；选择「稍后」则本会话不再自动弹出。
 
 发新版：修改根目录 `VERSION` → 打并推送 tag（如 `git tag v1.0.1 && git push origin v1.0.1`）。只有 `v*` tag 变动才会触发云端打包；也可在 Actions 里手动 **Run workflow**。同一 tag 重复推送会覆盖该版本资产。
 
 > 💡 打包后的 EXE 是单文件，内置 Python 运行时，目标电脑无需安装 Python  
 > Artifacts 仍会保留一份临时产物，但请优先用 Releases 链接分享
 
-### 方式三：本机 Windows 打包
-
-1. 确保已安装 Python 3.8+
-2. 双击运行 `build.bat` 脚本
-3. 生成的 EXE 在 `dist` 文件夹中
+> 源码仅供版权所有者维护使用，第三方请勿克隆运行或二次分发（见 `LICENSE`）。
 
 ## 🎮 使用说明
 
@@ -101,20 +92,6 @@ eggplant_pet/
 ```
 
 重启后自动加载；损坏时会备份并恢复为空数据。
-
-## 🔧 自定义修改
-
-### 修改点击随机对话
-打开 `main.py`，找到 `DIALOGUES` 列表。
-
-### 修改「聊聊天」剧本
-打开 `chat.py`，编辑 `_RULES` 关键词与回复。
-
-### 修改基础大小
-找到 `self.base_size = 150`，调整数值可以改变默认大小。
-
-### 修改动画速度
-在各动画函数中调整 `duration` 参数（单位：毫秒）。
 
 ## 📋 系统要求
 

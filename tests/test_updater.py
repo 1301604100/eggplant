@@ -26,6 +26,7 @@ SAMPLE_RELEASES = [
         "tag_name": "v1.2.0",
         "draft": False,
         "prerelease": False,
+        "body": "- 修复任务栏多条目\n- 优化更新提示",
         "assets": [
             {
                 "name": "茄子桌宠.exe",
@@ -75,6 +76,12 @@ class TestUpdater(unittest.TestCase):
         self.assertFalse(updater.should_enable_updater(platform="win32", frozen=False))
         self.assertFalse(updater.should_enable_updater(platform="darwin", frozen=True))
 
+    def test_releases_page_url(self):
+        self.assertEqual(
+            updater.releases_page_url(),
+            "https://github.com/1301604100/eggplant/releases",
+        )
+
     def test_read_local_version_fallback(self):
         self.assertEqual(updater.read_local_version(resource_reader=lambda: (_ for _ in ()).throw(OSError())), "0.0.0")
         self.assertEqual(updater.read_local_version(resource_reader=lambda: "1.3.0\n"), "1.3.0")
@@ -92,6 +99,24 @@ class TestUpdater(unittest.TestCase):
         self.assertEqual(picked["tag"], "v1.2.0")
         self.assertEqual(picked["download_url"], "https://example.com/new.exe")
         self.assertEqual(picked["size"], 200)
+        self.assertIn("修复任务栏多条目", picked["body"])
+
+    def test_format_release_notes_empty_and_truncate(self):
+        self.assertEqual(updater.format_release_notes(""), "暂无更新说明")
+        self.assertEqual(updater.format_release_notes(None), "暂无更新说明")
+        long_body = "a" * 400
+        notes = updater.format_release_notes(long_body, max_chars=20)
+        self.assertEqual(len(notes), 20)
+        self.assertTrue(notes.endswith("…"))
+
+    def test_format_update_prompt_text_includes_notes(self):
+        text = updater.format_update_prompt_text(
+            "1.0.0",
+            {"version": "1.2.0", "body": "修复拖动闪烁"},
+        )
+        self.assertIn("1.2.0", text)
+        self.assertIn("1.0.0", text)
+        self.assertIn("修复拖动闪烁", text)
 
     def test_pick_latest_prefers_chinese_asset_name(self):
         releases = [

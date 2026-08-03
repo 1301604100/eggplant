@@ -12,6 +12,10 @@ GITHUB_OWNER = "1301604100"
 GITHUB_REPO = "eggplant"
 ASSET_NAMES = ("茄子桌宠.exe", "EggplantPet-Windows.exe")
 CREATE_NO_WINDOW = 0x08000000
+RELEASES_PAGE_URL = "https://github.com/%s/%s/releases" % (
+    GITHUB_OWNER,
+    GITHUB_REPO,
+)
 
 _VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
@@ -34,11 +38,17 @@ def compare_versions(a, b):
 
 
 def should_enable_updater(platform=None, frozen=None):
+    """是否启用应用内自动下载替换（仅 Windows 打包版）。"""
     if platform is None:
         platform = sys.platform
     if frozen is None:
         frozen = bool(getattr(sys, "frozen", False))
     return platform == "win32" and frozen
+
+
+def releases_page_url():
+    """GitHub Releases 页面（非 Windows 打包版「检查更新」跳转用）。"""
+    return RELEASES_PAGE_URL
 
 
 def _default_version_reader():
@@ -95,13 +105,36 @@ def pick_latest_release(releases):
             continue
         if best_tuple is None or compare_versions(ver_tuple, best_tuple) > 0:
             best_tuple = ver_tuple
+            body = rel.get("body")
+            if body is None:
+                body = ""
             best = {
                 "version": "%d.%d.%d" % ver_tuple,
                 "tag": tag if str(tag).startswith("v") else "v%s" % ("%d.%d.%d" % ver_tuple),
                 "download_url": url,
                 "size": size,
+                "body": str(body),
             }
     return best
+
+
+def format_release_notes(body, max_chars=360):
+    """把 Release body 收成弹窗可用的纯文本摘要。"""
+    text = str(body or "").replace("\r\n", "\n").strip()
+    if not text:
+        return "暂无更新说明"
+    if len(text) > max_chars:
+        return text[: max_chars - 1].rstrip() + "…"
+    return text
+
+
+def format_update_prompt_text(local_version, release):
+    notes = format_release_notes(release.get("body") if release else "")
+    return "发现新版本 %s（当前 %s）\n\n%s" % (
+        release["version"],
+        local_version,
+        notes,
+    )
 
 
 RELEASES_URL = "https://api.github.com/repos/%s/%s/releases" % (
