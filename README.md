@@ -33,19 +33,21 @@
 
 ## 🚀 快速开始
 
-### 方式一：GitHub Releases 下载（推荐，无需本机 Windows / Python）
+### 方式一：GitHub Releases 下载（推荐，无需本机安装 Python）
 
 打包成功后会按根目录 `VERSION` 自动发布到 Releases（如 `v1.0.0`），长期可下载：
 
 1. 打开 [Releases 页面](https://github.com/1301604100/eggplant/releases)
 2. 进入对应版本（tag: `v{VERSION}`，例如 `v1.0.0`）
-3. 下载 `茄子桌宠.exe` 或 `EggplantPet-Windows.exe`，双击运行
+3. **Windows**：下载 `茄子桌宠.exe` 或 `EggplantPet-Windows.exe`，双击运行  
+4. **macOS（Apple Silicon）**：下载 `EggplantPet-macOS.zip`，解压得到 `茄子桌宠.app`  
+   - 未签名：若提示无法打开，在 Finder 中对 `.app` 右键 →「打开」
 
-右键/托盘菜单均有「检查更新」：先查 GitHub Release，失败则回退 [Gitee 发版仓](https://gitee.com/kary2/eggplant-releases/releases)，并弹出更新说明。Windows 安装版确认后自动下载替换 EXE；macOS / 源码运行确认后打开对应下载页。Windows 安装版还会在启动约 3 秒后静默检查；选择「稍后」则本会话不再自动弹出。
+右键/托盘菜单均有「检查更新」：先查 GitHub Release，失败则回退 [Gitee 发版仓](https://gitee.com/kary2/eggplant-releases/releases)，并弹出更新说明。Windows / macOS **打包版**确认后会应用内下载并替换；源码运行确认后打开对应下载页。打包版还会在启动约 3 秒后静默检查；选择「稍后」则本会话不再自动弹出。
 
-发新版：修改根目录 `VERSION` → 打并推送 tag（如 `git tag v1.0.1 && git push origin v1.0.1`）。只有 `v*` tag 变动才会触发云端打包，并尽力同步到 Gitee（需仓库 Secret `GITEE_TOKEN`）。也可在 Actions 里手动 **Run workflow**。
+发新版：修改根目录 `VERSION` → 打并推送 tag（如 `git tag v1.0.1 && git push origin v1.0.1`）。只有 `v*` tag 变动才会触发云端打包（Windows + macOS），并尽力同步到 Gitee（需仓库 Secret `GITEE_TOKEN`）。也可在 Actions 里手动 **Run workflow**。
 
-> 💡 打包后的 EXE 是单文件，内置 Python 运行时，目标电脑无需安装 Python  
+> 💡 打包产物内置 Python 运行时，目标电脑无需安装 Python  
 > Artifacts 仍会保留一份临时产物，但请优先用 Releases 链接分享
 
 > 源码仅供版权所有者维护使用，第三方请勿克隆运行或二次分发（见 `LICENSE`）。
@@ -79,7 +81,7 @@ eggplant_pet/
 ├── eggplant.png                     # 茄子角色图片（透明背景）
 ├── eggplant.ico                     # Windows 应用 / EXE 图标
 ├── build.bat                        # Windows 本机打包脚本
-├── .github/workflows/build-windows.yml  # GitHub Actions 云端打包
+├── .github/workflows/build-windows.yml  # GitHub Actions 云端打包（Win + Mac）
 └── README.md                        # 说明文档
 ```
 
@@ -95,9 +97,9 @@ eggplant_pet/
 
 ## 📋 系统要求
 
-- Windows 7 / 8 / 10 / 11
+- Windows 7 / 8 / 10 / 11，或 macOS（Apple Silicon）
 - Python 3.8 或更高版本（仅源码运行和打包时需要）
-- 约 50MB 磁盘空间
+- 约 50–100MB 磁盘空间
 
 ## ❓ 常见问题
 

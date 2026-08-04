@@ -1,4 +1,4 @@
-name: Build Windows EXE
+name: Build Release
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -80,6 +80,108 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read VERSION
+        id: version
+        run: |
+          v="$(tr -d '[:space:]' < VERSION)"
+          if [ -z "$v" ]; then echo "VERSION is empty"; exit 1; fi
+          expectedTag="v$v"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "$expectedTag" ]; then
+            echo "Tag '$GITHUB_REF_NAME' does not match VERSION ('$expectedTag')"
+            exit 1
+          fi
+          echo "value=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=$expectedTag" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Build .icns
+        run: |
+          mkdir -p build/eggplant.iconset
+          for size in 16 32 64 128 256 512; do
+            sips -z $size $size eggplant.png --out "build/eggplant.iconset/icon_${size}x${size}.png"
+            sips -z $((size*2)) $((size*2)) eggplant.png --out "build/eggplant.iconset/icon_${size}x${size}@2x.png"
+          done
+          iconutil -c icns build/eggplant.iconset -o build/eggplant.icns
+
+      - name: Build .app
+        run: >
+          pyinstaller
+          --windowed
+          --name "茄子桌宠"
+          --icon=build/eggplant.icns
+          --add-data "eggplant.png:."
+          --add-data "eggplant.ico:."
+          --add-data "VERSION:."
+          --hidden-import bubble
+          --hidden-import chat
+          --hidden-import tray
+          --hidden-import storage
+          --hidden-import bookmarks
+          --hidden-import todos
+          --hidden-import ui_theme
+          --hidden-import updater
+          main.py
+
+      - name: Zip .app
+        run: |
+          ditto -c -k --keepParent "dist/茄子桌宠.app" "dist/EggplantPet-macOS.zip"
+          ls -lh dist/EggplantPet-macOS.zip
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: eggplant-pet-macos
+          path: dist/EggplantPet-macOS.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read VERSION
+        id: version
+        run: |
+          v="$(tr -d '[:space:]' < VERSION)"
+          echo "value=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: eggplant-pet-windows
+          path: release-assets
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: eggplant-pet-macos
+          path: release-assets
+
+      - name: List assets
+        run: ls -lah release-assets
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -88,21 +190,34 @@ jobs:
           body: |
             ## 下载说明
             下载下方附件即可运行（无需安装 Python）：
+
+            **Windows**
             - `茄子桌宠.exe`（中文文件名）
             - `EggplantPet-Windows.exe`（英文文件名，部分环境下载更稳）
+
+            **macOS（Apple Silicon）**
+            - `EggplantPet-macOS.zip`：解压得到 `茄子桌宠.app`
+            - 未签名：首次若被拦截，请在 Finder 中右键 → 打开
+            - 打包版支持菜单「检查更新」应用内替换
 
             - Version: `${{ steps.version.outputs.value }}`
             - Commit: `${{ github.sha }}`
             - Workflow run: #${{ github.run_number }}
             - 国内镜像：[Gitee Releases](https://gitee.com/kary2/eggplant-releases/releases)
           files: |
-            dist/茄子桌宠.exe
-            dist/EggplantPet-Windows.exe
+            release-assets/茄子桌宠.exe
+            release-assets/EggplantPet-Windows.exe
+            release-assets/EggplantPet-macOS.zip
           fail_on_unmatched_files: true
           make_latest: true
           overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Sync Release to Gitee
         continue-on-error: true
@@ -110,19 +225,18 @@ jobs:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           PYTHONUTF8: "1"
           PYTHONIOENCODING: utf-8
-        shell: bash
         run: |
           if [ -z "${GITEE_TOKEN}" ]; then
             echo "GITEE_TOKEN not configured; skip Gitee sync"
             exit 0
           fi
-          # 只同步英文名 EXE：体积一份即可满足 updater，海外→Gitee 上传更稳
           python scripts/sync_gitee_release.py \
             --tag "${{ steps.version.outputs.tag }}" \
             --name "茄子桌宠 ${{ steps.version.outputs.tag }}" \
-            --body "Windows 构建（与 GitHub Release 同步）
+            --body "官方构建（与 GitHub Release 同步）
 
           - Version: ${{ steps.version.outputs.value }}
           - Commit: ${{ github.sha }}
           - 主站: https://github.com/1301604100/eggplant/releases" \
-            --file "dist/EggplantPet-Windows.exe"
+            --file "release-assets/EggplantPet-Windows.exe" \
+            --file "release-assets/EggplantPet-macOS.zip"

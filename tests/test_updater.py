@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -74,7 +75,9 @@ class TestUpdater(unittest.TestCase):
     def test_should_enable_updater(self):
         self.assertTrue(updater.should_enable_updater(platform="win32", frozen=True))
         self.assertFalse(updater.should_enable_updater(platform="win32", frozen=False))
-        self.assertFalse(updater.should_enable_updater(platform="darwin", frozen=True))
+        self.assertTrue(updater.should_enable_updater(platform="darwin", frozen=True))
+        self.assertFalse(updater.should_enable_updater(platform="darwin", frozen=False))
+        self.assertFalse(updater.should_enable_updater(platform="linux", frozen=True))
 
     def test_releases_page_url(self):
         self.assertEqual(
@@ -97,7 +100,7 @@ class TestUpdater(unittest.TestCase):
         self.assertEqual(len(updater.parse_version(version)), 3)
 
     def test_pick_latest_release(self):
-        picked = updater.pick_latest_release(SAMPLE_RELEASES)
+        picked = updater.pick_latest_release(SAMPLE_RELEASES, platform="win32")
         self.assertIsNotNone(picked)
         self.assertEqual(picked["version"], "1.2.0")
         self.assertEqual(picked["tag"], "v1.2.0")
@@ -122,10 +125,55 @@ class TestUpdater(unittest.TestCase):
                 ],
             }
         ]
-        picked = updater.pick_latest_release(releases, source="gitee")
+        picked = updater.pick_latest_release(
+            releases, source="gitee", platform="win32"
+        )
         self.assertEqual(picked["version"], "1.3.0")
         self.assertEqual(picked["download_url"], "https://gitee.com/file.exe")
         self.assertEqual(picked["source"], "gitee")
+
+    def test_pick_latest_darwin_selects_macos_zip(self):
+        releases = [
+            {
+                "tag_name": "v1.5.0",
+                "draft": False,
+                "prerelease": False,
+                "body": "mac",
+                "assets": [
+                    {
+                        "name": "EggplantPet-Windows.exe",
+                        "browser_download_url": "https://example.com/win.exe",
+                        "size": 1,
+                    },
+                    {
+                        "name": "EggplantPet-macOS.zip",
+                        "browser_download_url": "https://example.com/mac.zip",
+                        "size": 2,
+                    },
+                ],
+            }
+        ]
+        picked = updater.pick_latest_release(releases, platform="darwin")
+        self.assertEqual(picked["download_url"], "https://example.com/mac.zip")
+        self.assertIsNone(
+            updater.pick_latest_release(
+                [
+                    {
+                        "tag_name": "v1.5.0",
+                        "draft": False,
+                        "prerelease": False,
+                        "assets": [
+                            {
+                                "name": "EggplantPet-Windows.exe",
+                                "browser_download_url": "https://example.com/win.exe",
+                                "size": 1,
+                            }
+                        ],
+                    }
+                ],
+                platform="darwin",
+            )
+        )
 
     def test_fetch_latest_release_falls_back_to_gitee(self):
         gitee_payload = [
@@ -150,7 +198,9 @@ class TestUpdater(unittest.TestCase):
                 raise updater.urllib.error.URLError("github blocked")
             return FakeResponse(gitee_payload)
 
-        picked = updater.fetch_latest_release(urlopen=fake_urlopen)
+        picked = updater.fetch_latest_release(
+            urlopen=fake_urlopen, platform="win32"
+        )
         self.assertEqual(picked["version"], "1.4.0")
         self.assertEqual(picked["source"], "gitee")
 
@@ -191,16 +241,25 @@ class TestUpdater(unittest.TestCase):
                 ],
             }
         ]
-        picked = updater.pick_latest_release(releases)
+        picked = updater.pick_latest_release(releases, platform="win32")
         self.assertEqual(picked["download_url"], "https://example.com/zh.exe")
 
     def test_pick_latest_none_when_empty(self):
-        self.assertIsNone(updater.pick_latest_release([]))
+        self.assertIsNone(updater.pick_latest_release([], platform="win32"))
         self.assertIsNone(
             updater.pick_latest_release(
-                [{"tag_name": "v1.0.0", "draft": True, "prerelease": False, "assets": []}]
+                [{"tag_name": "v1.0.0", "draft": True, "prerelease": False, "assets": []}],
+                platform="win32",
             )
         )
+
+    def test_resolve_app_bundle_from_executable(self):
+        path = "/Users/me/Apps/茄子桌宠.app/Contents/MacOS/茄子桌宠"
+        self.assertEqual(
+            updater.resolve_app_bundle(path),
+            "/Users/me/Apps/茄子桌宠.app",
+        )
+        self.assertIsNone(updater.resolve_app_bundle("/usr/local/bin/foo"))
 
 
 class FakeResponse(object):
@@ -229,7 +288,9 @@ class TestUpdaterNetwork(unittest.TestCase):
         def fake_urlopen(req, timeout=None):
             return FakeResponse(SAMPLE_RELEASES)
 
-        result = updater.check_for_update(local_version="1.0.0", urlopen=fake_urlopen)
+        result = updater.check_for_update(
+            local_version="1.0.0", urlopen=fake_urlopen, platform="win32"
+        )
         self.assertEqual(result["version"], "1.2.0")
 
     def test_check_for_update_none_when_current(self):
@@ -237,7 +298,9 @@ class TestUpdaterNetwork(unittest.TestCase):
             return FakeResponse(SAMPLE_RELEASES)
 
         self.assertIsNone(
-            updater.check_for_update(local_version="1.2.0", urlopen=fake_urlopen)
+            updater.check_for_update(
+                local_version="1.2.0", urlopen=fake_urlopen, platform="win32"
+            )
         )
 
     def test_download_update_writes_file(self):
@@ -331,6 +394,50 @@ class TestUpdaterNetwork(unittest.TestCase):
             creationflags=updater.CREATE_NO_WINDOW,
             close_fds=True,
         )
+
+    def test_build_update_sh_content_replaces_app(self):
+        content = updater.build_update_sh_content(
+            "/Apps/茄子桌宠.app",
+            "/tmp/EggplantPet-macOS.zip",
+            4242,
+        )
+        self.assertIn("4242", content)
+        self.assertIn("茄子桌宠.app", content)
+        self.assertIn("EggplantPet-macOS.zip", content)
+        self.assertIn("unzip", content)
+        self.assertIn("xattr", content)
+        self.assertIn("com.apple.quarantine", content)
+        self.assertIn("open ", content)
+
+    def test_write_update_script_darwin_writes_shell(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        script_path = str(Path(tmp.name) / "update.sh")
+        exe = str(Path(tmp.name) / "茄子桌宠.app" / "Contents" / "MacOS" / "茄子桌宠")
+        Path(exe).parent.mkdir(parents=True)
+        Path(exe).write_text("x", encoding="utf-8")
+
+        with mock.patch.object(updater.sys, "platform", "darwin"):
+            updater.write_update_script(
+                exe,
+                str(Path(tmp.name) / "EggplantPet-macOS.zip"),
+                99,
+                script_path,
+            )
+
+        text = Path(script_path).read_text(encoding="utf-8")
+        self.assertIn("#!/bin/bash", text)
+        self.assertIn("unzip", text)
+        self.assertTrue(os.access(script_path, os.X_OK))
+
+    def test_launch_update_uses_bash_on_darwin(self):
+        with mock.patch.object(updater.sys, "platform", "darwin"), mock.patch.object(
+            updater.subprocess,
+            "Popen",
+        ) as popen:
+            updater.launch_update_and_exit("/tmp/update.sh", None)
+
+        popen.assert_called_once_with(["/bin/bash", "/tmp/update.sh"], close_fds=True)
 
 
 if __name__ == "__main__":

@@ -708,16 +708,23 @@ class EggplantPet(QWidget):
                     "eggplant_pet_update",
                 )
                 os.makedirs(tmpdir, exist_ok=True)
-                dest = os.path.join(
-                    tmpdir,
-                    "EggplantPet-Windows-%s.exe" % release["version"],
-                )
+                if sys.platform == "darwin":
+                    dest = os.path.join(
+                        tmpdir,
+                        "EggplantPet-macOS-%s.zip" % release["version"],
+                    )
+                    script = os.path.join(tmpdir, "update.sh")
+                else:
+                    dest = os.path.join(
+                        tmpdir,
+                        "EggplantPet-Windows-%s.exe" % release["version"],
+                    )
+                    script = os.path.join(tmpdir, "update.bat")
                 updater.download_update(
                     release["download_url"],
                     dest,
                     expected_size=release.get("size"),
                 )
-                script = os.path.join(tmpdir, "update.bat")
                 updater.write_update_script(
                     sys.executable,
                     dest,

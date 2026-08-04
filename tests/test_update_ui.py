@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import sys
 import threading
 import time
 import unittest
@@ -242,7 +243,8 @@ class TestUpdateUi(unittest.TestCase):
             threading.main_thread(),
         )
         self.assertIsNone(pet.download_result[0])
-        self.assertTrue(pet.download_result[1].endswith("update.bat"))
+        script_name = "update.sh" if sys.platform == "darwin" else "update.bat"
+        self.assertTrue(pet.download_result[1].endswith(script_name))
         self.assertFalse(pet._update_busy)
 
     def test_confirm_starts_download_after_repeated_check_attempt(self):

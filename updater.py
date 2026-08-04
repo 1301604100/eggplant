@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""应用内自动更新：版本比较与 GitHub Releases 选择。"""
+"""应用内自动更新：版本比较与 GitHub / Gitee Releases 选择。"""
 
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import urllib.error
@@ -13,7 +14,10 @@ GITHUB_OWNER = "1301604100"
 GITHUB_REPO = "eggplant"
 GITEE_OWNER = "kary2"
 GITEE_REPO = "eggplant-releases"
-ASSET_NAMES = ("茄子桌宠.exe", "EggplantPet-Windows.exe")
+WINDOWS_ASSET_NAMES = ("茄子桌宠.exe", "EggplantPet-Windows.exe")
+MAC_ASSET_NAMES = ("EggplantPet-macOS.zip",)
+# 兼容旧测试/引用
+ASSET_NAMES = WINDOWS_ASSET_NAMES
 CREATE_NO_WINDOW = 0x08000000
 RELEASES_PAGE_URL = "https://github.com/%s/%s/releases" % (
     GITHUB_OWNER,
@@ -53,12 +57,12 @@ def compare_versions(a, b):
 
 
 def should_enable_updater(platform=None, frozen=None):
-    """是否启用应用内自动下载替换（仅 Windows 打包版）。"""
+    """是否启用应用内自动下载替换（Windows / macOS 打包版）。"""
     if platform is None:
         platform = sys.platform
     if frozen is None:
         frozen = bool(getattr(sys, "frozen", False))
-    return platform == "win32" and frozen
+    return frozen and platform in ("win32", "darwin")
 
 
 def releases_page_url(source=None):
@@ -66,6 +70,24 @@ def releases_page_url(source=None):
     if source == "gitee":
         return GITEE_RELEASES_PAGE_URL
     return RELEASES_PAGE_URL
+
+
+def asset_names_for_platform(platform=None):
+    if platform is None:
+        platform = sys.platform
+    if platform == "darwin":
+        return MAC_ASSET_NAMES
+    return WINDOWS_ASSET_NAMES
+
+
+def resolve_app_bundle(executable_path):
+    """从 Mac .app 内可执行文件路径解析出 .app 包根目录。"""
+    path = os.path.abspath(executable_path or "")
+    while path and path != os.path.dirname(path):
+        if path.endswith(".app"):
+            return path
+        path = os.path.dirname(path)
+    return None
 
 
 def _default_version_reader():
@@ -87,12 +109,12 @@ def read_local_version(resource_reader=None):
         return "0.0.0"
 
 
-def _asset_for_release(release):
+def _asset_for_release(release, platform=None):
     assets = release.get("assets")
     if not assets:
         assets = release.get("attach_files") or []
     by_name = {a.get("name"): a for a in assets if isinstance(a, dict)}
-    for name in ASSET_NAMES:
+    for name in asset_names_for_platform(platform):
         if name in by_name:
             a = by_name[name]
             url = a.get("browser_download_url") or a.get("download_url")
@@ -106,7 +128,7 @@ def _asset_for_release(release):
     return None, None
 
 
-def pick_latest_release(releases, source=None):
+def pick_latest_release(releases, source=None, platform=None):
     best = None
     best_tuple = None
     for rel in releases or []:
@@ -119,7 +141,7 @@ def pick_latest_release(releases, source=None):
             ver_tuple = parse_version(tag)
         except ValueError:
             continue
-        url, size = _asset_for_release(rel)
+        url, size = _asset_for_release(rel, platform=platform)
         if not url:
             continue
         if best_tuple is None or compare_versions(ver_tuple, best_tuple) > 0:
@@ -179,7 +201,7 @@ def _fetch_releases_list(api_url, urlopen, timeout, accept=None):
     return data
 
 
-def fetch_latest_release(urlopen=None, timeout=15):
+def fetch_latest_release(urlopen=None, timeout=15, platform=None):
     """先 GitHub，失败或无可用资产时再 Gitee。"""
     errors = []
     sources = (
@@ -189,7 +211,7 @@ def fetch_latest_release(urlopen=None, timeout=15):
     for source, api_url, accept in sources:
         try:
             data = _fetch_releases_list(api_url, urlopen, timeout, accept=accept)
-            picked = pick_latest_release(data, source=source)
+            picked = pick_latest_release(data, source=source, platform=platform)
             if picked:
                 print("updater: using %s release %s" % (source, picked.get("tag")))
                 return picked
@@ -202,10 +224,10 @@ def fetch_latest_release(urlopen=None, timeout=15):
     return None
 
 
-def check_for_update(local_version=None, urlopen=None):
+def check_for_update(local_version=None, urlopen=None, platform=None):
     local = local_version if local_version is not None else read_local_version()
     local_t = parse_version(local)
-    latest = fetch_latest_release(urlopen=urlopen)
+    latest = fetch_latest_release(urlopen=urlopen, platform=platform)
     if not latest:
         return None
     if compare_versions(parse_version(latest["version"]), local_t) > 0:
@@ -218,7 +240,7 @@ def download_update(url, dest_path, expected_size=None, urlopen=None, progress_c
     req = _api_request(url)
     received = 0
     try:
-        with opener(req, timeout=60) as resp:
+        with opener(req, timeout=120) as resp:
             total = expected_size
             if total is None:
                 cl = None
@@ -304,22 +326,75 @@ def build_update_bat_content(current_exe, new_exe, pid):
     return "\r\n".join(lines) + "\r\n"
 
 
-def write_update_script(current_exe, new_exe, pid, script_path):
-    content = build_update_bat_content(current_exe, new_exe, pid)
+def build_update_sh_content(app_bundle, new_zip, pid):
+    """生成 macOS 替换 .app 的 bash 脚本。"""
+    # 用单引号包路径，内部单引号转义为 '\'' 
+    def q(path):
+        return "'%s'" % str(path).replace("'", "'\\''")
+
+    lines = [
+        "#!/bin/bash",
+        "set -e",
+        "PID=%d" % int(pid),
+        "NEW=%s" % q(new_zip),
+        "APP=%s" % q(app_bundle),
+        'LOG="$(dirname "$NEW")/update-failed.log"',
+        'while kill -0 "$PID" 2>/dev/null; do sleep 1; done',
+        'TMP="$(mktemp -d)"',
+        "cleanup() { rm -rf \"$TMP\"; }",
+        "trap cleanup EXIT",
+        'if ! unzip -q "$NEW" -d "$TMP"; then',
+        '  echo "unzip failed" > "$LOG"',
+        "  exit 1",
+        "fi",
+        'NEW_APP="$(find "$TMP" -maxdepth 3 -name \'*.app\' -type d | head -n 1)"',
+        'if [ -z "$NEW_APP" ] || [ ! -d "$NEW_APP" ]; then',
+        '  echo "no .app in zip" > "$LOG"',
+        "  exit 1",
+        "fi",
+        'PARENT="$(dirname "$APP")"',
+        'BASENAME="$(basename "$APP")"',
+        'DEST="$PARENT/$BASENAME"',
+        'rm -rf "$DEST"',
+        'mv "$NEW_APP" "$DEST"',
+        'xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true',
+        'open "$DEST"',
+        'rm -f "$NEW"',
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def write_update_script(current_exe, new_file, pid, script_path, platform=None):
+    if platform is None:
+        platform = sys.platform
     parent = os.path.dirname(script_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    encoding = "oem" if sys.platform == "win32" else "utf-8"
+    if platform == "darwin":
+        app = resolve_app_bundle(current_exe)
+        if not app:
+            raise ValueError("cannot resolve .app bundle from %r" % (current_exe,))
+        content = build_update_sh_content(app, new_file, pid)
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        mode = os.stat(script_path).st_mode
+        os.chmod(script_path, mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        return script_path
+    content = build_update_bat_content(current_exe, new_file, pid)
+    encoding = "oem" if platform == "win32" else "utf-8"
     with open(script_path, "w", encoding=encoding) as f:
         f.write(content)
     return script_path
 
 
 def launch_update_and_exit(script_path, quit_callback):
-    kwargs = {}
+    kwargs = {"close_fds": True}
     if sys.platform == "win32":
         kwargs["creationflags"] = CREATE_NO_WINDOW
-        kwargs["close_fds"] = True
-    subprocess.Popen(["cmd.exe", "/c", script_path], **kwargs)
+        subprocess.Popen(["cmd.exe", "/c", script_path], **kwargs)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["/bin/bash", script_path], **kwargs)
+    else:
+        subprocess.Popen(["/bin/sh", script_path], **kwargs)
     if quit_callback:
         quit_callback()

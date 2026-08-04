@@ -234,11 +234,16 @@ def sync_release(owner, repo, token, tag, name, body, files, work_dir):
     if not release_id:
         raise RuntimeError("gitee release missing id: %r" % (rel,))
     existing = _release_asset_names(rel)
-    # 英文文件名优先：国内链路慢时至少保证 updater 可用资产先上去
-    ordered = sorted(
-        files,
-        key=lambda p: 0 if os.path.basename(p) == "EggplantPet-Windows.exe" else 1,
-    )
+    # Windows EXE 优先，其次 Mac zip（海外→Gitee 慢，至少先保 Windows 回退）
+    def _prio(path):
+        name = os.path.basename(path)
+        if name == "EggplantPet-Windows.exe":
+            return 0
+        if name == "EggplantPet-macOS.zip":
+            return 1
+        return 2
+
+    ordered = sorted(files, key=_prio)
     uploaded = 0
     errors = []
     for path in ordered:
