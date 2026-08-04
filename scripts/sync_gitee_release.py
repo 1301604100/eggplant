@@ -24,24 +24,47 @@ DEFAULT_OWNER = "kary2"
 DEFAULT_REPO = "eggplant-releases"
 
 
-def _request(method, url, token, data=None, headers=None, timeout=60):
+def _request(method, url, data=None, headers=None, timeout=60):
     hdrs = {"User-Agent": "eggplant-pet-gitee-sync"}
     if headers:
         hdrs.update(headers)
-    body = None
-    if data is not None and not isinstance(data, bytes):
-        # form or json string already encoded by caller
-        body = data
+    body = data if isinstance(data, (bytes, type(None))) else data
     req = Request(url, data=body, headers=hdrs, method=method)
-    with urlopen(req, timeout=timeout) as resp:
-        raw = resp.read()
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+    except HTTPError as exc:
+        detail = b""
+        try:
+            detail = exc.read() or b""
+        except Exception:
+            pass
+        text = detail.decode("utf-8", errors="replace")
+        raise RuntimeError(
+            "Gitee API %s %s -> HTTP %s: %s" % (method, url.split("?")[0], exc.code, text)
+        ) from exc
     if not raw:
         return None
     return json.loads(raw.decode("utf-8"))
 
 
-def ensure_gitee_repo_has_commit(owner, repo, token, work_dir):
-    """空仓无法建 Release：推一个占位 README 到 master。"""
+def _with_token(url, token):
+    sep = "&" if "?" in url else "?"
+    return "%s%saccess_token=%s" % (url, sep, token)
+
+
+def verify_token(token):
+    """确认私人令牌可用于 API（需要 projects 权限）。"""
+    data = _request("GET", _with_token("%s/user" % GITEE_API, token))
+    login = (data or {}).get("login")
+    if not login:
+        raise RuntimeError("Gitee token invalid: /user returned %r" % (data,))
+    print("gitee: authenticated as", login)
+    return login
+
+
+def ensure_gitee_repo_has_commit(owner, repo, token, work_dir, tag=None):
+    """空仓无法建 Release：推一个占位 README 到 master，并可选推送 tag。"""
     remote = "https://oauth2:%s@gitee.com/%s/%s.git" % (token, owner, repo)
     git_dir = os.path.join(work_dir, ".git")
     if not os.path.isdir(git_dir):
@@ -82,16 +105,22 @@ def ensure_gitee_repo_has_commit(owner, repo, token, work_dir):
         ["git", "push", "-u", "gitee", "HEAD:master", "--force"],
         cwd=work_dir,
     )
+    if tag:
+        # Release 需要 tag；已存在则覆盖指向当前 master
+        subprocess.call(["git", "tag", "-d", tag], cwd=work_dir)
+        subprocess.check_call(["git", "tag", "-f", tag], cwd=work_dir)
+        subprocess.check_call(
+            ["git", "push", "gitee", "refs/tags/%s" % tag, "--force"],
+            cwd=work_dir,
+        )
 
 
 def find_release_by_tag(owner, repo, token, tag):
-    url = "%s/repos/%s/%s/releases?access_token=%s&page=1&per_page=100" % (
-        GITEE_API,
-        owner,
-        repo,
+    url = _with_token(
+        "%s/repos/%s/%s/releases?page=1&per_page=100" % (GITEE_API, owner, repo),
         token,
     )
-    data = _request("GET", url, token)
+    data = _request("GET", url)
     for rel in data or []:
         if rel.get("tag_name") == tag:
             return rel
@@ -99,10 +128,12 @@ def find_release_by_tag(owner, repo, token, tag):
 
 
 def create_release(owner, repo, token, tag, name, body):
-    url = "%s/repos/%s/%s/releases" % (GITEE_API, owner, repo)
+    url = _with_token("%s/repos/%s/%s/releases" % (GITEE_API, owner, repo), token)
     payload = urlencode(
         {
             "access_token": token,
+            "owner": owner,
+            "repo": repo,
             "tag_name": tag,
             "name": name,
             "body": body or "",
@@ -112,7 +143,6 @@ def create_release(owner, repo, token, tag, name, body):
     return _request(
         "POST",
         url,
-        token,
         data=payload,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
@@ -149,11 +179,10 @@ def _multipart_encode(fields, file_field, filepath):
 
 
 def upload_asset(owner, repo, token, release_id, filepath):
-    url = "%s/repos/%s/%s/releases/%s/attach_files" % (
-        GITEE_API,
-        owner,
-        repo,
-        release_id,
+    url = _with_token(
+        "%s/repos/%s/%s/releases/%s/attach_files"
+        % (GITEE_API, owner, repo, release_id),
+        token,
     )
     body, content_type = _multipart_encode(
         {"access_token": token},
@@ -163,7 +192,6 @@ def upload_asset(owner, repo, token, release_id, filepath):
     return _request(
         "POST",
         url,
-        token,
         data=body,
         headers={"Content-Type": content_type},
         timeout=300,
@@ -171,22 +199,23 @@ def upload_asset(owner, repo, token, release_id, filepath):
 
 
 def sync_release(owner, repo, token, tag, name, body, files, work_dir):
-    ensure_gitee_repo_has_commit(owner, repo, token, work_dir)
+    verify_token(token)
+    ensure_gitee_repo_has_commit(owner, repo, token, work_dir, tag=tag)
     rel = find_release_by_tag(owner, repo, token, tag)
     if rel is None:
-        print("gitee: creating release", tag)
+        print("gitee: creating release", tag, flush=True)
         rel = create_release(owner, repo, token, tag, name, body)
     else:
-        print("gitee: release exists", tag, "id=", rel.get("id"))
+        print("gitee: release exists", tag, "id=", rel.get("id"), flush=True)
     release_id = rel.get("id")
     if not release_id:
         raise RuntimeError("gitee release missing id: %r" % (rel,))
     for path in files:
         if not os.path.isfile(path):
             raise FileNotFoundError(path)
-        print("gitee: uploading", path)
+        print("gitee: uploading", path, flush=True)
         upload_asset(owner, repo, token, release_id, path)
-    print("gitee: sync done")
+    print("gitee: sync done", flush=True)
 
 
 def main(argv=None):
@@ -203,7 +232,8 @@ def main(argv=None):
         default=os.environ.get("GITEE_SYNC_WORKDIR", ".gitee-release-work"),
     )
     args = parser.parse_args(argv)
-    if not args.token:
+    token = (args.token or "").strip()
+    if not token:
         print("gitee: GITEE_TOKEN missing, skip sync", file=sys.stderr)
         return 0
     os.makedirs(args.work_dir, exist_ok=True)
@@ -211,7 +241,7 @@ def main(argv=None):
         sync_release(
             args.owner,
             args.repo,
-            args.token,
+            token,
             args.tag,
             args.name,
             args.body,
@@ -219,7 +249,12 @@ def main(argv=None):
             args.work_dir,
         )
     except (HTTPError, URLError, OSError, RuntimeError, subprocess.CalledProcessError) as exc:
-        print("gitee: sync failed:", repr(exc), file=sys.stderr)
+        print("gitee: sync failed:", str(exc), file=sys.stderr)
+        print(
+            "gitee: 请确认 Secret 为「私人令牌」(非仓库部署公钥)，"
+            "并勾选 projects 权限；更新后重新跑 workflow。",
+            file=sys.stderr,
+        )
         return 1
     return 0
 
