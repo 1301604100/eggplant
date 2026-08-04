@@ -5,12 +5,10 @@ from __future__ import print_function
 
 import argparse
 import json
-import mimetypes
 import os
 import subprocess
 import sys
 import time
-import uuid
 
 try:
     from urllib.error import HTTPError, URLError
@@ -212,11 +210,22 @@ def upload_asset(owner, repo, token, release_id, filepath, retries=3, timeout=18
     raise RuntimeError("upload failed after %d attempts: %s" % (retries, last_err))
 
 
+def _release_asset_names(rel):
+    names = set()
+    for a in (rel or {}).get("assets") or []:
+        if isinstance(a, dict) and a.get("name"):
+            names.add(a["name"])
+    for a in (rel or {}).get("attach_files") or []:
+        if isinstance(a, dict) and a.get("name"):
+            names.add(a["name"])
+    return names
+
+
 def sync_release(owner, repo, token, tag, name, body, files, work_dir):
     verify_token(token)
-    ensure_gitee_repo_has_commit(owner, repo, token, work_dir, tag=tag)
     rel = find_release_by_tag(owner, repo, token, tag)
     if rel is None:
+        ensure_gitee_repo_has_commit(owner, repo, token, work_dir, tag=tag)
         _log("gitee: creating release %s" % tag)
         rel = create_release(owner, repo, token, tag, name, body)
     else:
@@ -224,6 +233,7 @@ def sync_release(owner, repo, token, tag, name, body, files, work_dir):
     release_id = rel.get("id")
     if not release_id:
         raise RuntimeError("gitee release missing id: %r" % (rel,))
+    existing = _release_asset_names(rel)
     # 英文文件名优先：国内链路慢时至少保证 updater 可用资产先上去
     ordered = sorted(
         files,
@@ -234,11 +244,17 @@ def sync_release(owner, repo, token, tag, name, body, files, work_dir):
     for path in ordered:
         if not os.path.isfile(path):
             raise FileNotFoundError(path)
+        filename = os.path.basename(path)
+        if filename in existing:
+            _log("gitee: asset already present, skip %s" % filename)
+            uploaded += 1
+            continue
         try:
             upload_asset(owner, repo, token, release_id, path)
             uploaded += 1
+            existing.add(filename)
         except Exception as exc:
-            errors.append("%s: %s" % (os.path.basename(path), exc))
+            errors.append("%s: %s" % (filename, exc))
             _log("gitee: skip after errors: %s" % errors[-1])
     if uploaded == 0:
         raise RuntimeError("no assets uploaded; " + "; ".join(errors))
