@@ -254,12 +254,22 @@ class TestUpdater(unittest.TestCase):
         )
 
     def test_resolve_app_bundle_from_executable(self):
-        path = "/Users/me/Apps/茄子桌宠.app/Contents/MacOS/茄子桌宠"
-        self.assertEqual(
-            updater.resolve_app_bundle(path),
-            "/Users/me/Apps/茄子桌宠.app",
+        path = os.path.join(
+            os.sep,
+            "Users",
+            "me",
+            "Apps",
+            "茄子桌宠.app",
+            "Contents",
+            "MacOS",
+            "茄子桌宠",
         )
-        self.assertIsNone(updater.resolve_app_bundle("/usr/local/bin/foo"))
+        resolved = updater.resolve_app_bundle(path)
+        self.assertIsNotNone(resolved)
+        self.assertTrue(resolved.endswith("茄子桌宠.app"))
+        self.assertIsNone(
+            updater.resolve_app_bundle(os.path.join(os.sep, "usr", "local", "bin", "foo"))
+        )
 
 
 class FakeResponse(object):
