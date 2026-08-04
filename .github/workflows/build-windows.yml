@@ -116,7 +116,7 @@ jobs:
             echo "GITEE_TOKEN not configured; skip Gitee sync"
             exit 0
           fi
-          # 英文名优先上传；中文名失败也不阻断（updater 认两种文件名）
+          # 只同步英文名 EXE：体积一份即可满足 updater，海外→Gitee 上传更稳
           python scripts/sync_gitee_release.py \
             --tag "${{ steps.version.outputs.tag }}" \
             --name "茄子桌宠 ${{ steps.version.outputs.tag }}" \
@@ -125,5 +125,4 @@ jobs:
           - Version: ${{ steps.version.outputs.value }}
           - Commit: ${{ github.sha }}
           - 主站: https://github.com/1301604100/eggplant/releases" \
-            --file "dist/EggplantPet-Windows.exe" \
-            --file "dist/茄子桌宠.exe"
+            --file "dist/EggplantPet-Windows.exe"

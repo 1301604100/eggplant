@@ -157,80 +157,58 @@ def create_release(owner, repo, token, tag, name, body):
     )
 
 
-def _multipart_encode(fields, file_field, filepath, filename=None):
-    """组装单文件 multipart/form-data 请求体。"""
-    boundary = "----EggplantBoundary%s" % uuid.uuid4().hex
-    filename = filename or os.path.basename(filepath)
-    ctype = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    with open(filepath, "rb") as f:
-        file_bytes = f.read()
-
-    chunks = []
-    for key, value in fields.items():
-        chunks.append(("--%s\r\n" % boundary).encode("utf-8"))
-        chunks.append(
-            ('Content-Disposition: form-data; name="%s"\r\n\r\n' % key).encode("utf-8")
-        )
-        chunks.append(str(value).encode("utf-8"))
-        chunks.append(b"\r\n")
-    # filename*= 提升非 ASCII 文件名兼容性
-    chunks.append(("--%s\r\n" % boundary).encode("utf-8"))
-    disp = 'Content-Disposition: form-data; name="%s"; filename="%s"\r\n' % (
-        file_field,
-        filename.encode("ascii", "replace").decode("ascii"),
-    )
-    if any(ord(ch) > 127 for ch in filename):
-        from urllib.parse import quote
-
-        disp = (
-            'Content-Disposition: form-data; name="%s"; filename="%s"; '
-            "filename*=UTF-8''%s\r\n"
-            % (
-                file_field,
-                filename.encode("ascii", "replace").decode("ascii"),
-                quote(filename, safe=""),
-            )
-        )
-    chunks.append(disp.encode("utf-8"))
-    chunks.append(("Content-Type: %s\r\n\r\n" % ctype).encode("utf-8"))
-    chunks.append(file_bytes)
-    chunks.append(b"\r\n")
-    chunks.append(("--%s--\r\n" % boundary).encode("utf-8"))
-    return b"".join(chunks), "multipart/form-data; boundary=%s" % boundary
-
-
 def upload_asset(owner, repo, token, release_id, filepath, retries=3, timeout=1800):
-    url = _with_token(
-        "%s/repos/%s/%s/releases/%s/attach_files"
-        % (GITEE_API, owner, repo, release_id),
-        token,
+    """用 curl 流式 multipart 上传（urllib 整包写在海外→Gitee 易超时）。"""
+    url = "%s/repos/%s/%s/releases/%s/attach_files" % (
+        GITEE_API,
+        owner,
+        repo,
+        release_id,
     )
     filename = os.path.basename(filepath)
+    size = os.path.getsize(filepath)
     last_err = None
     for attempt in range(1, retries + 1):
-        body, content_type = _multipart_encode(
-            {"access_token": token},
-            "file",
-            filepath,
-            filename=filename,
+        _log(
+            "gitee: uploading %s (%d bytes, attempt %d/%d via curl)"
+            % (filename, size, attempt, retries)
         )
+        cmd = [
+            "curl",
+            "-sS",
+            "-f",
+            "-X",
+            "POST",
+            url,
+            "-F",
+            "access_token=%s" % token,
+            "-F",
+            "file=@%s;filename=%s" % (filepath, filename),
+            "--connect-timeout",
+            "30",
+            "--max-time",
+            str(timeout),
+            "--retry",
+            "0",
+        ]
         try:
-            _log(
-                "gitee: uploading %s (%d bytes, attempt %d/%d)"
-                % (filename, len(body), attempt, retries)
-            )
-            return _request(
-                "POST",
-                url,
-                data=body,
-                headers={"Content-Type": content_type},
-                timeout=timeout,
-            )
-        except (URLError, RuntimeError, TimeoutError, OSError) as exc:
-            last_err = exc
-            _log("gitee: upload failed: %s" % exc)
+            out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+            if out:
+                try:
+                    return json.loads(out.decode("utf-8"))
+                except ValueError:
+                    return {"raw": out.decode("utf-8", errors="replace")[:500]}
+            return {}
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.output or b"").decode("utf-8", errors="replace")[:800]
+            last_err = RuntimeError("curl exit %s: %s" % (exc.returncode, detail))
+            _log("gitee: upload failed: %s" % last_err)
             if attempt < retries:
-                time.sleep(5 * attempt)
+                time.sleep(8 * attempt)
+        except OSError as exc:
+            last_err = exc
+            _log("gitee: curl missing/failed: %s" % exc)
+            break
     raise RuntimeError("upload failed after %d attempts: %s" % (retries, last_err))
 
 
