@@ -580,8 +580,8 @@ class EggplantPet(QWidget):
             self._show_bubble(answer, duration_ms=3500)
 
     # ============== 自动更新 ==============
-    def _open_releases_page(self):
-        url = updater.releases_page_url()
+    def _open_releases_page(self, source=None):
+        url = updater.releases_page_url(source)
         try:
             ok = webbrowser.open(url)
             if not ok:
@@ -660,7 +660,8 @@ class EggplantPet(QWidget):
             on_confirm = lambda: self._start_download_update(release)
         else:
             confirm_text = "打开下载页"
-            on_confirm = self._open_releases_page
+            source = release.get("source") if release else None
+            on_confirm = lambda s=source: self._open_releases_page(s)
         self._update_prompt = ConfirmBubble(
             text,
             confirm_text=confirm_text,

@@ -81,6 +81,10 @@ class TestUpdater(unittest.TestCase):
             updater.releases_page_url(),
             "https://github.com/1301604100/eggplant/releases",
         )
+        self.assertEqual(
+            updater.releases_page_url("gitee"),
+            "https://gitee.com/kary2/eggplant-releases/releases",
+        )
 
     def test_read_local_version_fallback(self):
         self.assertEqual(updater.read_local_version(resource_reader=lambda: (_ for _ in ()).throw(OSError())), "0.0.0")
@@ -100,6 +104,55 @@ class TestUpdater(unittest.TestCase):
         self.assertEqual(picked["download_url"], "https://example.com/new.exe")
         self.assertEqual(picked["size"], 200)
         self.assertIn("修复任务栏多条目", picked["body"])
+        self.assertEqual(picked.get("source"), "github")
+
+    def test_pick_latest_accepts_gitee_attach_files(self):
+        releases = [
+            {
+                "tag_name": "v1.3.0",
+                "draft": False,
+                "prerelease": False,
+                "body": "gitee build",
+                "attach_files": [
+                    {
+                        "name": "茄子桌宠.exe",
+                        "download_url": "https://gitee.com/file.exe",
+                        "size": 9,
+                    }
+                ],
+            }
+        ]
+        picked = updater.pick_latest_release(releases, source="gitee")
+        self.assertEqual(picked["version"], "1.3.0")
+        self.assertEqual(picked["download_url"], "https://gitee.com/file.exe")
+        self.assertEqual(picked["source"], "gitee")
+
+    def test_fetch_latest_release_falls_back_to_gitee(self):
+        gitee_payload = [
+            {
+                "tag_name": "v1.4.0",
+                "draft": False,
+                "prerelease": False,
+                "body": "from gitee",
+                "assets": [
+                    {
+                        "name": "EggplantPet-Windows.exe",
+                        "browser_download_url": "https://gitee.example/a.exe",
+                        "size": 3,
+                    }
+                ],
+            }
+        ]
+
+        def fake_urlopen(req, timeout=None):
+            url = getattr(req, "full_url", None) or req.get_full_url()
+            if "api.github.com" in url:
+                raise updater.urllib.error.URLError("github blocked")
+            return FakeResponse(gitee_payload)
+
+        picked = updater.fetch_latest_release(urlopen=fake_urlopen)
+        self.assertEqual(picked["version"], "1.4.0")
+        self.assertEqual(picked["source"], "gitee")
 
     def test_format_release_notes_empty_and_truncate(self):
         self.assertEqual(updater.format_release_notes(""), "暂无更新说明")

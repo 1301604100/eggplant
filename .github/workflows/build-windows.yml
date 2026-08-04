@@ -94,6 +94,7 @@ jobs:
             - Version: `${{ steps.version.outputs.value }}`
             - Commit: `${{ github.sha }}`
             - Workflow run: #${{ github.run_number }}
+            - 国内镜像：[Gitee Releases](https://gitee.com/kary2/eggplant-releases/releases)
           files: |
             dist/茄子桌宠.exe
             dist/EggplantPet-Windows.exe
@@ -102,3 +103,24 @@ jobs:
           overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync Release to Gitee
+        continue-on-error: true
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "${GITEE_TOKEN}" ]; then
+            echo "GITEE_TOKEN not configured; skip Gitee sync"
+            exit 0
+          fi
+          python scripts/sync_gitee_release.py \
+            --tag "${{ steps.version.outputs.tag }}" \
+            --name "茄子桌宠 ${{ steps.version.outputs.tag }}" \
+            --body "Windows 构建（与 GitHub Release 同步）
+
+          - Version: ${{ steps.version.outputs.value }}
+          - Commit: ${{ github.sha }}
+          - 主站: https://github.com/1301604100/eggplant/releases" \
+            --file "dist/茄子桌宠.exe" \
+            --file "dist/EggplantPet-Windows.exe"

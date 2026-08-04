@@ -8,3 +8,4 @@ build/
 .venv/
 venv/
 .worktrees/
+.gitee-release-work/

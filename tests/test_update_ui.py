@@ -104,7 +104,7 @@ class TestUpdateUi(unittest.TestCase):
     def test_non_windows_prompt_opens_releases_page_on_confirm(self):
         pet = _FakePet()
         opened = []
-        pet._open_releases_page = lambda: opened.append("releases")
+        pet._open_releases_page = lambda source=None: opened.append(source or "releases")
         pet._hide_bubble = lambda: None
         pet._hide_update_prompt = lambda: None
         pet._snooze_update_prompt = lambda: None

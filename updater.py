@@ -6,15 +6,30 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 
 GITHUB_OWNER = "1301604100"
 GITHUB_REPO = "eggplant"
+GITEE_OWNER = "kary2"
+GITEE_REPO = "eggplant-releases"
 ASSET_NAMES = ("茄子桌宠.exe", "EggplantPet-Windows.exe")
 CREATE_NO_WINDOW = 0x08000000
 RELEASES_PAGE_URL = "https://github.com/%s/%s/releases" % (
     GITHUB_OWNER,
     GITHUB_REPO,
+)
+GITEE_RELEASES_PAGE_URL = "https://gitee.com/%s/%s/releases" % (
+    GITEE_OWNER,
+    GITEE_REPO,
+)
+GITHUB_RELEASES_API = "https://api.github.com/repos/%s/%s/releases" % (
+    GITHUB_OWNER,
+    GITHUB_REPO,
+)
+GITEE_RELEASES_API = "https://gitee.com/api/v5/repos/%s/%s/releases" % (
+    GITEE_OWNER,
+    GITEE_REPO,
 )
 
 _VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
@@ -46,8 +61,10 @@ def should_enable_updater(platform=None, frozen=None):
     return platform == "win32" and frozen
 
 
-def releases_page_url():
-    """GitHub Releases 页面（非 Windows 打包版「检查更新」跳转用）。"""
+def releases_page_url(source=None):
+    """打开发布页：按检查来源选择 GitHub 或 Gitee。"""
+    if source == "gitee":
+        return GITEE_RELEASES_PAGE_URL
     return RELEASES_PAGE_URL
 
 
@@ -71,12 +88,14 @@ def read_local_version(resource_reader=None):
 
 
 def _asset_for_release(release):
-    assets = release.get("assets") or []
+    assets = release.get("assets")
+    if not assets:
+        assets = release.get("attach_files") or []
     by_name = {a.get("name"): a for a in assets if isinstance(a, dict)}
     for name in ASSET_NAMES:
         if name in by_name:
             a = by_name[name]
-            url = a.get("browser_download_url")
+            url = a.get("browser_download_url") or a.get("download_url")
             if url:
                 size = a.get("size")
                 try:
@@ -87,7 +106,7 @@ def _asset_for_release(release):
     return None, None
 
 
-def pick_latest_release(releases):
+def pick_latest_release(releases, source=None):
     best = None
     best_tuple = None
     for rel in releases or []:
@@ -114,6 +133,7 @@ def pick_latest_release(releases):
                 "download_url": url,
                 "size": size,
                 "body": str(body),
+                "source": source or "github",
             }
     return best
 
@@ -137,35 +157,49 @@ def format_update_prompt_text(local_version, release):
     )
 
 
-RELEASES_URL = "https://api.github.com/repos/%s/%s/releases" % (
-    GITHUB_OWNER,
-    GITHUB_REPO,
-)
-
-
 def _default_urlopen(req, timeout=15):
     return urllib.request.urlopen(req, timeout=timeout)
 
 
-def _github_request(url):
-    return urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "eggplant-pet",
-            "Accept": "application/vnd.github+json",
-        },
-    )
+def _api_request(url, accept=None):
+    headers = {"User-Agent": "eggplant-pet"}
+    if accept:
+        headers["Accept"] = accept
+    return urllib.request.Request(url, headers=headers)
 
 
-def fetch_latest_release(urlopen=None, timeout=15):
+def _fetch_releases_list(api_url, urlopen, timeout, accept=None):
     opener = urlopen or _default_urlopen
-    req = _github_request(RELEASES_URL)
+    req = _api_request(api_url, accept=accept)
     with opener(req, timeout=timeout) as resp:
         raw = resp.read()
     data = json.loads(raw.decode("utf-8"))
     if not isinstance(data, list):
-        raise ValueError("unexpected releases payload")
-    return pick_latest_release(data)
+        raise ValueError("unexpected releases payload from %s" % api_url)
+    return data
+
+
+def fetch_latest_release(urlopen=None, timeout=15):
+    """先 GitHub，失败或无可用资产时再 Gitee。"""
+    errors = []
+    sources = (
+        ("github", GITHUB_RELEASES_API, "application/vnd.github+json"),
+        ("gitee", GITEE_RELEASES_API, None),
+    )
+    for source, api_url, accept in sources:
+        try:
+            data = _fetch_releases_list(api_url, urlopen, timeout, accept=accept)
+            picked = pick_latest_release(data, source=source)
+            if picked:
+                print("updater: using %s release %s" % (source, picked.get("tag")))
+                return picked
+            print("updater: %s has no usable release asset, try next" % source)
+        except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError) as exc:
+            print("updater: %s fetch failed: %r" % (source, exc))
+            errors.append(exc)
+    if errors:
+        raise errors[0]
+    return None
 
 
 def check_for_update(local_version=None, urlopen=None):
@@ -181,7 +215,7 @@ def check_for_update(local_version=None, urlopen=None):
 
 def download_update(url, dest_path, expected_size=None, urlopen=None, progress_callback=None):
     opener = urlopen or _default_urlopen
-    req = _github_request(url)
+    req = _api_request(url)
     received = 0
     try:
         with opener(req, timeout=60) as resp:
