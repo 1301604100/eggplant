@@ -182,19 +182,6 @@ jobs:
       - name: List assets
         run: ls -lah release-assets
 
-      - name: Normalize Windows Chinese filename
-        run: |
-          cd release-assets
-          # 部分链路会把非 ASCII 文件名落成 default.exe
-          if [ ! -f "茄子桌宠.exe" ]; then
-            if [ -f default.exe ]; then
-              mv default.exe "茄子桌宠.exe"
-            elif [ -f EggplantPet-Windows.exe ]; then
-              cp EggplantPet-Windows.exe "茄子桌宠.exe"
-            fi
-          fi
-          ls -lah
-
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -205,12 +192,11 @@ jobs:
             下载下方附件即可运行（无需安装 Python）：
 
             **Windows**
-            - `茄子桌宠.exe`（中文文件名）
-            - `EggplantPet-Windows.exe`（英文文件名，部分环境下载更稳）
+            - `EggplantPet-Windows.exe`
 
             **macOS（Apple Silicon）**
             - `EggplantPet-macOS.zip`：解压得到 `茄子桌宠.app`
-            - 未签名：首次若被拦截，请在 Finder 中右键 → 打开
+            - 未签名：首次若被拦截，请在 Finder 中对 `.app` 右键 → 打开
             - 打包版支持菜单「检查更新」应用内替换
 
             - Version: `${{ steps.version.outputs.value }}`
@@ -218,7 +204,6 @@ jobs:
             - Workflow run: #${{ github.run_number }}
             - 国内镜像：[Gitee Releases](https://gitee.com/kary2/eggplant-releases/releases)
           files: |
-            release-assets/茄子桌宠.exe
             release-assets/EggplantPet-Windows.exe
             release-assets/EggplantPet-macOS.zip
           fail_on_unmatched_files: true

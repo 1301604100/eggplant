@@ -39,7 +39,7 @@
 
 1. 打开 [Releases 页面](https://github.com/1301604100/eggplant/releases)
 2. 进入对应版本（tag: `v{VERSION}`，例如 `v1.0.0`）
-3. **Windows**：下载 `茄子桌宠.exe` 或 `EggplantPet-Windows.exe`，双击运行  
+3. **Windows**：下载 `EggplantPet-Windows.exe`，双击运行  
 4. **macOS（Apple Silicon）**：下载 `EggplantPet-macOS.zip`，解压得到 `茄子桌宠.app`  
    - 未签名：若提示无法打开，在 Finder 中对 `.app` 右键 →「打开」
 
