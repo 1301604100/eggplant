@@ -182,6 +182,19 @@ jobs:
       - name: List assets
         run: ls -lah release-assets
 
+      - name: Normalize Windows Chinese filename
+        run: |
+          cd release-assets
+          # 部分链路会把非 ASCII 文件名落成 default.exe
+          if [ ! -f "茄子桌宠.exe" ]; then
+            if [ -f default.exe ]; then
+              mv default.exe "茄子桌宠.exe"
+            elif [ -f EggplantPet-Windows.exe ]; then
+              cp EggplantPet-Windows.exe "茄子桌宠.exe"
+            fi
+          fi
+          ls -lah
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
