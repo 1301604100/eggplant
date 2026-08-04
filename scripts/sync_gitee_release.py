@@ -53,13 +53,21 @@ def _with_token(url, token):
     return "%s%saccess_token=%s" % (url, sep, token)
 
 
+def _log(msg):
+    """Windows CI 默认 cp1252，避免中文路径把日志打崩。"""
+    try:
+        print(msg, flush=True)
+    except UnicodeEncodeError:
+        print(msg.encode("unicode_escape").decode("ascii"), flush=True)
+
+
 def verify_token(token):
     """确认私人令牌可用于 API（需要 projects 权限）。"""
     data = _request("GET", _with_token("%s/user" % GITEE_API, token))
     login = (data or {}).get("login")
     if not login:
         raise RuntimeError("Gitee token invalid: /user returned %r" % (data,))
-    print("gitee: authenticated as", login)
+    _log("gitee: authenticated as %s" % login)
     return login
 
 
@@ -203,19 +211,19 @@ def sync_release(owner, repo, token, tag, name, body, files, work_dir):
     ensure_gitee_repo_has_commit(owner, repo, token, work_dir, tag=tag)
     rel = find_release_by_tag(owner, repo, token, tag)
     if rel is None:
-        print("gitee: creating release", tag, flush=True)
+        _log("gitee: creating release %s" % tag)
         rel = create_release(owner, repo, token, tag, name, body)
     else:
-        print("gitee: release exists", tag, "id=", rel.get("id"), flush=True)
+        _log("gitee: release exists %s id=%s" % (tag, rel.get("id")))
     release_id = rel.get("id")
     if not release_id:
         raise RuntimeError("gitee release missing id: %r" % (rel,))
     for path in files:
         if not os.path.isfile(path):
             raise FileNotFoundError(path)
-        print("gitee: uploading", path, flush=True)
+        _log("gitee: uploading %s" % os.path.basename(path))
         upload_asset(owner, repo, token, release_id, path)
-    print("gitee: sync done", flush=True)
+    _log("gitee: sync done")
 
 
 def main(argv=None):
