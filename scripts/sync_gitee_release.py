@@ -9,6 +9,7 @@ import mimetypes
 import os
 import subprocess
 import sys
+import time
 import uuid
 
 try:
@@ -156,10 +157,10 @@ def create_release(owner, repo, token, tag, name, body):
     )
 
 
-def _multipart_encode(fields, file_field, filepath):
+def _multipart_encode(fields, file_field, filepath, filename=None):
     """组装单文件 multipart/form-data 请求体。"""
     boundary = "----EggplantBoundary%s" % uuid.uuid4().hex
-    filename = os.path.basename(filepath)
+    filename = filename or os.path.basename(filepath)
     ctype = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     with open(filepath, "rb") as f:
         file_bytes = f.read()
@@ -172,13 +173,25 @@ def _multipart_encode(fields, file_field, filepath):
         )
         chunks.append(str(value).encode("utf-8"))
         chunks.append(b"\r\n")
+    # filename*= 提升非 ASCII 文件名兼容性
     chunks.append(("--%s\r\n" % boundary).encode("utf-8"))
-    chunks.append(
-        (
-            'Content-Disposition: form-data; name="%s"; filename="%s"\r\n'
-            % (file_field, filename)
-        ).encode("utf-8")
+    disp = 'Content-Disposition: form-data; name="%s"; filename="%s"\r\n' % (
+        file_field,
+        filename.encode("ascii", "replace").decode("ascii"),
     )
+    if any(ord(ch) > 127 for ch in filename):
+        from urllib.parse import quote
+
+        disp = (
+            'Content-Disposition: form-data; name="%s"; filename="%s"; '
+            "filename*=UTF-8''%s\r\n"
+            % (
+                file_field,
+                filename.encode("ascii", "replace").decode("ascii"),
+                quote(filename, safe=""),
+            )
+        )
+    chunks.append(disp.encode("utf-8"))
     chunks.append(("Content-Type: %s\r\n\r\n" % ctype).encode("utf-8"))
     chunks.append(file_bytes)
     chunks.append(b"\r\n")
@@ -186,24 +199,39 @@ def _multipart_encode(fields, file_field, filepath):
     return b"".join(chunks), "multipart/form-data; boundary=%s" % boundary
 
 
-def upload_asset(owner, repo, token, release_id, filepath):
+def upload_asset(owner, repo, token, release_id, filepath, retries=3, timeout=1800):
     url = _with_token(
         "%s/repos/%s/%s/releases/%s/attach_files"
         % (GITEE_API, owner, repo, release_id),
         token,
     )
-    body, content_type = _multipart_encode(
-        {"access_token": token},
-        "file",
-        filepath,
-    )
-    return _request(
-        "POST",
-        url,
-        data=body,
-        headers={"Content-Type": content_type},
-        timeout=300,
-    )
+    filename = os.path.basename(filepath)
+    last_err = None
+    for attempt in range(1, retries + 1):
+        body, content_type = _multipart_encode(
+            {"access_token": token},
+            "file",
+            filepath,
+            filename=filename,
+        )
+        try:
+            _log(
+                "gitee: uploading %s (%d bytes, attempt %d/%d)"
+                % (filename, len(body), attempt, retries)
+            )
+            return _request(
+                "POST",
+                url,
+                data=body,
+                headers={"Content-Type": content_type},
+                timeout=timeout,
+            )
+        except (URLError, RuntimeError, TimeoutError, OSError) as exc:
+            last_err = exc
+            _log("gitee: upload failed: %s" % exc)
+            if attempt < retries:
+                time.sleep(5 * attempt)
+    raise RuntimeError("upload failed after %d attempts: %s" % (retries, last_err))
 
 
 def sync_release(owner, repo, token, tag, name, body, files, work_dir):
@@ -218,12 +246,28 @@ def sync_release(owner, repo, token, tag, name, body, files, work_dir):
     release_id = rel.get("id")
     if not release_id:
         raise RuntimeError("gitee release missing id: %r" % (rel,))
-    for path in files:
+    # 英文文件名优先：国内链路慢时至少保证 updater 可用资产先上去
+    ordered = sorted(
+        files,
+        key=lambda p: 0 if os.path.basename(p) == "EggplantPet-Windows.exe" else 1,
+    )
+    uploaded = 0
+    errors = []
+    for path in ordered:
         if not os.path.isfile(path):
             raise FileNotFoundError(path)
-        _log("gitee: uploading %s" % os.path.basename(path))
-        upload_asset(owner, repo, token, release_id, path)
-    _log("gitee: sync done")
+        try:
+            upload_asset(owner, repo, token, release_id, path)
+            uploaded += 1
+        except Exception as exc:
+            errors.append("%s: %s" % (os.path.basename(path), exc))
+            _log("gitee: skip after errors: %s" % errors[-1])
+    if uploaded == 0:
+        raise RuntimeError("no assets uploaded; " + "; ".join(errors))
+    if errors:
+        _log("gitee: partial sync ok (%d uploaded); errors: %s" % (uploaded, errors))
+    else:
+        _log("gitee: sync done")
 
 
 def main(argv=None):
@@ -257,12 +301,13 @@ def main(argv=None):
             args.work_dir,
         )
     except (HTTPError, URLError, OSError, RuntimeError, subprocess.CalledProcessError) as exc:
-        print("gitee: sync failed:", str(exc), file=sys.stderr)
-        print(
-            "gitee: 请确认 Secret 为「私人令牌」(非仓库部署公钥)，"
-            "并勾选 projects 权限；更新后重新跑 workflow。",
-            file=sys.stderr,
-        )
+        _log("gitee: sync failed: %s" % exc)
+        msg = str(exc).lower()
+        if "401" in msg or "unauthorized" in msg or "403" in msg:
+            _log(
+                "gitee: check GITEE_TOKEN is a personal access token "
+                "with projects scope"
+            )
         return 1
     return 0
 

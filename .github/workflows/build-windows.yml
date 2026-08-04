@@ -108,12 +108,15 @@ jobs:
         continue-on-error: true
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: utf-8
         shell: bash
         run: |
           if [ -z "${GITEE_TOKEN}" ]; then
             echo "GITEE_TOKEN not configured; skip Gitee sync"
             exit 0
           fi
+          # 英文名优先上传；中文名失败也不阻断（updater 认两种文件名）
           python scripts/sync_gitee_release.py \
             --tag "${{ steps.version.outputs.tag }}" \
             --name "茄子桌宠 ${{ steps.version.outputs.tag }}" \
@@ -122,5 +125,5 @@ jobs:
           - Version: ${{ steps.version.outputs.value }}
           - Commit: ${{ github.sha }}
           - 主站: https://github.com/1301604100/eggplant/releases" \
-            --file "dist/茄子桌宠.exe" \
-            --file "dist/EggplantPet-Windows.exe"
+            --file "dist/EggplantPet-Windows.exe" \
+            --file "dist/茄子桌宠.exe"
