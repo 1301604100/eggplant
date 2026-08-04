@@ -228,6 +228,8 @@ jobs:
             echo "GITEE_TOKEN not configured; skip Gitee sync"
             exit 0
           fi
+          # 仅同步 Windows：GitHub Actions→Gitee 上传大 zip 常 30min 0 字节超时
+          # Mac 包请用 GitHub Release；国内 Mac 需镜像时可本机手动上传
           python scripts/sync_gitee_release.py \
             --tag "${{ steps.version.outputs.tag }}" \
             --name "茄子桌宠 ${{ steps.version.outputs.tag }}" \
@@ -235,6 +237,6 @@ jobs:
 
           - Version: ${{ steps.version.outputs.value }}
           - Commit: ${{ github.sha }}
-          - 主站: https://github.com/1301604100/eggplant/releases" \
-            --file "release-assets/EggplantPet-Windows.exe" \
-            --file "release-assets/EggplantPet-macOS.zip"
+          - 主站: https://github.com/1301604100/eggplant/releases
+          - macOS 包见 GitHub Release 附件 EggplantPet-macOS.zip" \
+            --file "release-assets/EggplantPet-Windows.exe"

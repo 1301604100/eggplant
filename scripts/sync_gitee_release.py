@@ -155,8 +155,8 @@ def create_release(owner, repo, token, tag, name, body):
     )
 
 
-def upload_asset(owner, repo, token, release_id, filepath, retries=3, timeout=1800):
-    """用 curl 流式 multipart 上传（urllib 整包写在海外→Gitee 易超时）。"""
+def upload_asset(owner, repo, token, release_id, filepath, retries=2, timeout=300):
+    """用 curl 流式 multipart 上传（海外 CI→Gitee 常极慢，超时宜短、少重试）。"""
     url = "%s/repos/%s/%s/releases/%s/attach_files" % (
         GITEE_API,
         owner,
@@ -175,6 +175,7 @@ def upload_asset(owner, repo, token, release_id, filepath, retries=3, timeout=18
             "curl",
             "-sS",
             "-f",
+            "--http1.1",
             "-X",
             "POST",
             url,
@@ -183,11 +184,13 @@ def upload_asset(owner, repo, token, release_id, filepath, retries=3, timeout=18
             "-F",
             "file=@%s;filename=%s" % (filepath, filename),
             "--connect-timeout",
-            "30",
+            "20",
             "--max-time",
             str(timeout),
             "--retry",
             "0",
+            "-o",
+            "-",
         ]
         try:
             out = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
